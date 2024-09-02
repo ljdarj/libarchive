@@ -143,7 +143,7 @@ struct zip {
 
 	unsigned char *file_header;
 	size_t file_header_extra_offset;
-	unsigned long (*crc32func)(unsigned long crc, const void *buff, size_t len);
+	uint32_t (*crc32func)(uint32_t crc, const void *buff, size_t len);
 
 	struct cd_segment *central_directory;
 	struct cd_segment *central_directory_last;
@@ -232,14 +232,8 @@ cd_alloc(struct zip *zip, size_t length)
 	return (p);
 }
 
-static unsigned long
-real_crc32(unsigned long crc, const void *buff, size_t len)
-{
-	return crc32(crc, buff, (unsigned int)len);
-}
-
-static unsigned long
-fake_crc32(unsigned long crc, const void *buff, size_t len)
+static uint32_t
+fake_crc32(uint32_t crc, const void *buff, size_t len)
 {
 	(void)crc; /* UNUSED */
 	(void)buff; /* UNUSED */
@@ -348,7 +342,7 @@ archive_write_zip_options(struct archive_write *a, const char *key,
 		 * certain complex tests.
 		 */
 		if (val == NULL || val[0] == 0) {
-			zip->crc32func = real_crc32;
+			zip->crc32func = libarchive_crc32;
 		} else {
 			zip->crc32func = fake_crc32;
 		}
@@ -468,7 +462,7 @@ archive_write_set_format_zip(struct archive *_a)
 #ifdef HAVE_ZLIB_H
 	zip->deflate_compression_level = Z_DEFAULT_COMPRESSION;
 #endif
-	zip->crc32func = real_crc32;
+	zip->crc32func = libarchive_crc32;
 
 	/* A buffer used for both compression and encryption. */
 	zip->len_buf = 65536;
@@ -1541,7 +1535,7 @@ static void
 trad_enc_update_keys(struct trad_enc_ctx *ctx, uint8_t c)
 {
 	uint8_t t;
-#define CRC32(c, b) (crc32(c ^ 0xffffffffUL, &b, 1) ^ 0xffffffffUL)
+#define CRC32(c, b) (libarchive_crc32(c ^ 0xffffffffUL, &b, 1) ^ 0xffffffffUL)
 
 	ctx->keys[0] = CRC32(ctx->keys[0], c);
 	ctx->keys[1] = (ctx->keys[1] + (ctx->keys[0] & 0xff)) * 134775813L + 1;

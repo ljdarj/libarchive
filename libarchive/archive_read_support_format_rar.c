@@ -331,7 +331,7 @@ struct rar
   unsigned int dictionary_size;
   char start_new_block;
   char entry_eof;
-  unsigned long crc_calculated;
+  uint32_t crc_calculated;
   int found_first_header;
   char has_endarc_header;
   struct data_block_offsets *dbo;
@@ -914,7 +914,7 @@ archive_read_format_rar_read_header(struct archive_read *a,
   char head_type;
   int ret;
   unsigned flags;
-  unsigned long crc32_expected;
+  uint32_t crc32_expected;
 
   a->archive.archive_format = ARCHIVE_FORMAT_RAR;
   if (a->archive.archive_format_name == NULL)
@@ -951,7 +951,7 @@ archive_read_format_rar_read_header(struct archive_read *a,
 
   while (1)
   {
-    unsigned long crc32_val;
+    uint32_t crc32_val;
 
     if ((h = __archive_read_ahead(a, 7, NULL)) == NULL)
       return (ARCHIVE_FATAL);
@@ -1005,7 +1005,7 @@ archive_read_format_rar_read_header(struct archive_read *a,
         return (ARCHIVE_FATAL);
       }
 
-      crc32_val = crc32(0, (const unsigned char *)p + 2, (unsigned)skip - 2);
+      crc32_val = libarchive_crc32(0, (const unsigned char *)p + 2, (unsigned)skip - 2);
       if ((crc32_val & 0xffff) != archive_le16dec(p)) {
 #ifndef DONT_FAIL_ON_CRC_ERROR
         archive_set_error(&a->archive, ARCHIVE_ERRNO_FILE_FORMAT,
@@ -1062,7 +1062,7 @@ archive_read_format_rar_read_header(struct archive_read *a,
 		      return (ARCHIVE_FATAL);
 	      }
 	      p = h;
-	      crc32_val = crc32(crc32_val, (const unsigned char *)p, (unsigned int)to_read);
+	      crc32_val = libarchive_crc32(crc32_val, p, to_read);
 	      __archive_read_consume(a, to_read);
 	      skip -= to_read;
       }
@@ -1402,7 +1402,7 @@ read_header(struct archive_read *a, struct archive_entry *entry,
       "Invalid header size");
     return (ARCHIVE_FATAL);
   }
-  crc32_val = crc32(0, (const unsigned char *)p + 2, 7 - 2);
+  crc32_val = libarchive_crc32(0, p + 2, 7 - 2);
   __archive_read_consume(a, 7);
 
   if (!(rar->file_flags & FHD_SOLID))
@@ -1436,7 +1436,7 @@ read_header(struct archive_read *a, struct archive_entry *entry,
     return (ARCHIVE_FATAL);
 
   /* File Header CRC check. */
-  crc32_val = crc32(crc32_val, h, (unsigned)(header_size - 7));
+  crc32_val = libarchive_crc32(crc32_val, h, (size_t)(header_size - 7));
   if ((crc32_val & 0xffff) != archive_le16dec(rar_header.crc)) {
 #ifndef DONT_FAIL_ON_CRC_ERROR
     archive_set_error(&a->archive, ARCHIVE_ERRNO_FILE_FORMAT,
@@ -2002,8 +2002,8 @@ read_data_stored(struct archive_read *a, const void **buff, size_t *size,
   rar->bytes_remaining -= bytes_avail;
   rar->bytes_unconsumed = bytes_avail;
   /* Calculate File CRC. */
-  rar->crc_calculated = crc32(rar->crc_calculated, *buff,
-    (unsigned)bytes_avail);
+  rar->crc_calculated = libarchive_crc32(rar->crc_calculated, *buff,
+    (size_t)bytes_avail);
   return (ARCHIVE_OK);
 }
 
@@ -2063,8 +2063,7 @@ read_data_compressed(struct archive_read *a, const void **buff, size_t *size,
         *offset = rar->offset_outgoing;
         rar->offset_outgoing += *size;
         /* Calculate File CRC. */
-        rar->crc_calculated = crc32(rar->crc_calculated, *buff,
-          (unsigned)*size);
+        rar->crc_calculated = libarchive_crc32(rar->crc_calculated, *buff, *size);
         rar->unp_offset = 0;
         return (ARCHIVE_OK);
       }
@@ -2099,8 +2098,7 @@ read_data_compressed(struct archive_read *a, const void **buff, size_t *size,
         *offset = rar->offset_outgoing;
         rar->offset_outgoing += *size;
         /* Calculate File CRC. */
-        rar->crc_calculated = crc32(rar->crc_calculated, *buff,
-          (unsigned)*size);
+        rar->crc_calculated = libarchive_crc32(rar->crc_calculated, *buff, *size);
         return (ret);
       }
       continue;
@@ -2258,7 +2256,7 @@ read_data_compressed(struct archive_read *a, const void **buff, size_t *size,
   rar->offset_outgoing += *size;
 ending_block:
   /* Calculate File CRC. */
-  rar->crc_calculated = crc32(rar->crc_calculated, *buff, (unsigned)*size);
+  rar->crc_calculated = libarchive_crc32(rar->crc_calculated, *buff, *size);
   return ret;
 }
 
@@ -3495,7 +3493,7 @@ compile_program(const uint8_t *bytes, size_t length)
   prog = calloc(1, sizeof(*prog));
   if (!prog)
     return NULL;
-  prog->fingerprint = crc32(0, bytes, (unsigned int)length) | ((uint64_t)length << 32);
+  prog->fingerprint = libarchive_crc32(0, bytes, length) | ((uint64_t)length << 32);
 
   if (membr_bits(&br, 1))
   {

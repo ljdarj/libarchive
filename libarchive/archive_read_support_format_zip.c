@@ -150,7 +150,7 @@ struct zip {
 	int			has_encrypted_entries;
 
 	/* List of entries (seekable Zip only) */
-	struct zip_entry	*zip_entries;
+	struct zip_entry		*zip_entries;
 	struct archive_rb_tree	tree;
 	struct archive_rb_tree	tree_rsrc;
 
@@ -159,23 +159,22 @@ struct zip {
 
 	/* Information about entry we're currently reading. */
 	struct zip_entry	*entry;
-	int64_t			entry_bytes_remaining;
+	int64_t				entry_bytes_remaining;
 
 	/* These count the number of bytes actually read for the entry. */
 	int64_t			entry_compressed_bytes_read;
 	int64_t			entry_uncompressed_bytes_read;
 
 	/* Running CRC32 of the decompressed and decrypted data */
-	unsigned long		computed_crc32;
-	unsigned long		(*crc32func)(unsigned long, const void *,
-				    size_t);
+	unsigned long	computed_crc32;
+	uint32_t		(*crc32func)(uint32_t, const void *, size_t);
 	char			ignore_crc32;
 
 	/* Flags to mark progress of decompression. */
 	char			decompress_init;
 	char			end_of_entry;
 
-	unsigned char 		*uncompressed_buffer;
+	unsigned char 	*uncompressed_buffer;
 	size_t 			uncompressed_buffer_size;
 
 #ifdef HAVE_ZLIB_H
@@ -302,7 +301,7 @@ static void
 trad_enc_update_keys(struct trad_enc_ctx *ctx, uint8_t c)
 {
 	uint8_t t;
-#define CRC32(c, b) (crc32(c ^ 0xffffffffUL, &b, 1) ^ 0xffffffffUL)
+#define CRC32(c, b) (libarchive_crc32(c ^ 0xffffffffUL, &b, 1) ^ 0xffffffffUL)
 
 	ctx->keys[0] = CRC32(ctx->keys[0], c);
 	ctx->keys[1] = (ctx->keys[1] + (ctx->keys[0] & 0xff)) * 134775813L + 1;
@@ -401,15 +400,9 @@ crypt_derive_key_sha1(const void *p, int size, unsigned char *key,
  * from entry bodies, and common API.
  */
 
-static unsigned long
-real_crc32(unsigned long crc, const void *buff, size_t len)
-{
-	return crc32(crc, buff, (unsigned int)len);
-}
-
 /* Used by "ignorecrc32" option to speed up tests. */
-static unsigned long
-fake_crc32(unsigned long crc, const void *buff, size_t len)
+static uint32_t
+fake_crc32(uint32_t crc, const void *buff, size_t len)
 {
 	(void)crc; /* UNUSED */
 	(void)buff; /* UNUSED */
@@ -3325,7 +3318,7 @@ archive_read_format_zip_options(struct archive_read *a,
 	} else if (strcmp(key, "ignorecrc32") == 0) {
 		/* Mostly useful for testing. */
 		if (val == NULL || val[0] == 0) {
-			zip->crc32func = real_crc32;
+			zip->crc32func = libarchive_crc32;
 			zip->ignore_crc32 = 0;
 		} else {
 			zip->crc32func = fake_crc32;
@@ -3615,7 +3608,7 @@ archive_read_support_format_zip_streamable(struct archive *_a)
 	 * any encrypted entries yet.
 	 */
 	zip->has_encrypted_entries = ARCHIVE_READ_FORMAT_ENCRYPTION_DONT_KNOW;
-	zip->crc32func = real_crc32;
+	zip->crc32func = libarchive_crc32;
 
 	r = __archive_read_register_format(a,
 	    zip,
@@ -4409,7 +4402,7 @@ archive_read_support_format_zip_seekable(struct archive *_a)
 	 * any encrypted entries yet.
 	 */
 	zip->has_encrypted_entries = ARCHIVE_READ_FORMAT_ENCRYPTION_DONT_KNOW;
-	zip->crc32func = real_crc32;
+	zip->crc32func = libarchive_crc32;
 
 	r = __archive_read_register_format(a,
 	    zip,

@@ -238,15 +238,15 @@ struct _7zip {
 	/* Structural information about the archive. */
 	struct _7z_stream_info	 si;
 
-	int			 header_is_being_read;
-	int			 header_is_encoded;
-	uint64_t		 header_bytes_remaining;
-	unsigned long		 header_crc32;
+	int			header_is_being_read;
+	int			header_is_encoded;
+	uint64_t	header_bytes_remaining;
+	uint32_t	header_crc32;
 	/* Header offset to check that reading points of the file contents
 	 * will not exceed the header. */
-	uint64_t		 header_offset;
+	uint64_t	header_offset;
 	/* Base offset of the archive file for a seek in case reading SFX. */
-	uint64_t		 seek_base;
+	uint64_t	seek_base;
 
 	/* List of entries */
 	size_t			 entries_remaining;
@@ -260,7 +260,7 @@ struct _7zip {
 	uint64_t		 entry_bytes_remaining;
 
 	/* Running CRC32 of the decompressed data */
-	unsigned long		 entry_crc32;
+	uint32_t		 entry_crc32;
 
 	/* Flags to mark progress of decompression. */
 	char			 end_of_entry;
@@ -565,7 +565,7 @@ check_7zip_header_in_sfx(const char *p)
 		 * Magic Code, so we should do this in order not to
 		 * make a mis-detection.
 		 */
-		if (crc32(0, (const unsigned char *)p + 12, 20)
+		if (libarchive_crc32(0, p + 12, 20)
 			!= archive_le32dec(p + 8))
 			return (6);
 		/* Hit the header! */
@@ -690,7 +690,7 @@ archive_read_format_7zip_read_header(struct archive_read *a,
 
 	zip->entry_offset = 0;
 	zip->end_of_entry = 0;
-	zip->entry_crc32 = crc32(0, NULL, 0);
+	zip->entry_crc32 = libarchive_crc32(0, NULL, 0);
 
 	/* Setup a string conversion for a filename. */
 	if (zip->sconv == NULL) {
@@ -896,7 +896,7 @@ archive_read_format_7zip_read_data(struct archive_read *a,
 
 	/* Update checksum */
 	if ((zip->entry->flg & CRC32_IS_SET) && bytes)
-		zip->entry_crc32 = crc32(zip->entry_crc32, *buff,
+		zip->entry_crc32 = libarchive_crc32(zip->entry_crc32, *buff,
 		    (unsigned)bytes);
 
 	/* If we hit the end, swallow any end-of-data marker. */
@@ -2978,7 +2978,7 @@ header_bytes(struct archive_read *a, size_t rbytes)
 	}
 
 	/* Update checksum */
-	zip->header_crc32 = crc32(zip->header_crc32, p, (unsigned)rbytes);
+	zip->header_crc32 = libarchive_crc32(zip->header_crc32, p, rbytes);
 	return (p);
 }
 
@@ -3012,7 +3012,7 @@ slurp_central_directory(struct archive_read *a, struct _7zip *zip,
 	}
 
 	/* CRC check. */
-	if (crc32(0, (const unsigned char *)p + 12, 20)
+	if (libarchive_crc32(0, p + 12, 20)
 	    != archive_le32dec(p + 8)) {
 #ifndef DONT_FAIL_ON_CRC_ERROR
 		archive_set_error(&a->archive, -1, "Header CRC error");

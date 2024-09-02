@@ -525,7 +525,7 @@ _7z_write_header(struct archive_write *a, struct archive_entry *entry)
 		bytes = compress_out(a, p, (size_t)file->size, ARCHIVE_Z_RUN);
 		if (bytes < 0)
 			return ((int)bytes);
-		zip->entry_crc32 = crc32(zip->entry_crc32, p, (unsigned)bytes);
+		zip->entry_crc32 = libarchive_crc32(zip->entry_crc32, p, (size_t)bytes);
 		zip->entry_bytes_remaining -= bytes;
 	}
 
@@ -583,8 +583,7 @@ compress_out(struct archive_write *a, const void *buff, size_t s,
 		return (0);
 
 	if ((zip->crc32flg & PRECODE_CRC32) && s)
-		zip->precode_crc32 = crc32(zip->precode_crc32, buff,
-		    (unsigned)s);
+		zip->precode_crc32 = libarchive_crc32(zip->precode_crc32, buff, s);
 	zip->stream.next_in = (const unsigned char *)buff;
 	zip->stream.avail_in = s;
 	for (;;) {
@@ -599,7 +598,7 @@ compress_out(struct archive_write *a, const void *buff, size_t s,
 			zip->stream.next_out = zip->wbuff;
 			zip->stream.avail_out = sizeof(zip->wbuff);
 			if (zip->crc32flg & ENCODED_CRC32)
-				zip->encoded_crc32 = crc32(zip->encoded_crc32,
+				zip->encoded_crc32 = libarchive_crc32(zip->encoded_crc32,
 				    zip->wbuff, sizeof(zip->wbuff));
 			if (run == ARCHIVE_Z_FINISH && r != ARCHIVE_EOF)
 				continue;
@@ -612,8 +611,8 @@ compress_out(struct archive_write *a, const void *buff, size_t s,
 		if (write_to_temp(a, zip->wbuff, (size_t)bytes) != ARCHIVE_OK)
 			return (ARCHIVE_FATAL);
 		if ((zip->crc32flg & ENCODED_CRC32) && bytes)
-			zip->encoded_crc32 = crc32(zip->encoded_crc32,
-			    zip->wbuff, (unsigned)bytes);
+			zip->encoded_crc32 = libarchive_crc32(zip->encoded_crc32,
+			    zip->wbuff, (size_t)bytes);
 	}
 
 	return (s);
@@ -634,7 +633,7 @@ _7z_write_data(struct archive_write *a, const void *buff, size_t s)
 	bytes = compress_out(a, buff, s, ARCHIVE_Z_RUN);
 	if (bytes < 0)
 		return (bytes);
-	zip->entry_crc32 = crc32(zip->entry_crc32, buff, (unsigned)bytes);
+	zip->entry_crc32 = libarchive_crc32(zip->entry_crc32, buff, (size_t)bytes);
 	zip->entry_bytes_remaining -= bytes;
 	return (bytes);
 }
@@ -858,7 +857,7 @@ _7z_close(struct archive_write *a)
 	archive_le64enc(&wb[12], header_offset);/* Next Header Offset */
 	archive_le64enc(&wb[20], header_size);/* Next Header Size */
 	archive_le32enc(&wb[28], header_crc32);/* Next Header CRC */
-	archive_le32enc(&wb[8], crc32(0, &wb[12], 20));/* Start Header CRC */
+	archive_le32enc(&wb[8], libarchive_crc32(0, &wb[12], 20));/* Start Header CRC */
 	zip->wbuff_remaining -= 32;
 
 	/*

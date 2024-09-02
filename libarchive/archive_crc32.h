@@ -31,7 +31,31 @@
 #endif
 
 #include <stddef.h>
+#ifdef HAVE_LZO_LZOCONF_H
+#include <lzo/lzoconf.h>
 
+static uint32_t
+libarchive_crc32(uint32_t crc, const void* _p, size_t len)
+{
+	return (uint32_t)lzo_crc32((lzo_uint32_t)crc, _p, (lzo_uint)len);
+}
+#elif defined HAVE_ZLIB_H
+#include <zlib.h>
+
+static uint32_t
+libarchive_crc32(uint32_t crc, const void* _p, size_t len)
+{
+	return (uint32_t)crc32((unsigned long)crc, _p, (unsigned int)len);
+}
+#elif defined HAVE_LZMA_H
+#include <lzma.h>
+
+static uint32_t
+libarchive_crc32(uint32_t crc, const void* _p, size_t len)
+{
+	return lzma_crc32(_p, len, crc);
+}
+#else
 /*
  * When zlib is unavailable, we should still be able to validate
  * uncompressed zip archives.  That requires us to be able to compute
@@ -40,13 +64,14 @@
  * but still pretty fast: This runs about 300MB/s on my 3GHz P4
  * compared to about 800MB/s for the zlib implementation.
  */
-static unsigned long
-crc32(unsigned long crc, const void *_p, size_t len)
+static uint32_t
+libarchive_crc32(uint32_t crc, const void *_p, size_t len)
 {
-	unsigned long crc2, b, i;
+	uint32_t crc2;
+	unsigned long b, i;
 	const unsigned char *p = _p;
 	static volatile int crc_tbl_inited = 0;
-	static unsigned long crc_tbl[256];
+	static uint32_t crc_tbl[256];
 
 	if (_p == NULL)
 		return (0);
@@ -82,5 +107,5 @@ crc32(unsigned long crc, const void *_p, size_t len)
 		crc = crc_tbl[(crc ^ *p++) & 0xff] ^ (crc >> 8);
 	return (crc ^ 0xffffffffUL);
 }
-
+#endif
 #endif
