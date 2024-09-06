@@ -107,7 +107,7 @@ int extract_one(struct archive* a, struct archive_entry* ae, uint32_t crc) {
 		goto fn_exit;
 	}
 
-	computed_crc = crc32(0, buf, fsize);
+	computed_crc = libarchive_crc32(0, buf, fsize);
 	assertEqualInt(computed_crc, crc);
 	ret = 0;
 
@@ -336,7 +336,7 @@ DEFINE_TEST(test_read_format_rar5_blake2)
 	assertA(proper_size == archive_read_data(a, buf, proper_size));
 
 	/* To be extra pedantic, let's also check crc32 of the poem. */
-	assertEqualInt(crc32(0, buf, proper_size), 0x7E5EC49E);
+	assertEqualInt(libarchive_crc32(0, buf, proper_size), 0x7E5EC49E);
 
 	assertA(ARCHIVE_EOF == archive_read_next_header(a, &ae));
 	EPILOGUE();
@@ -359,7 +359,7 @@ DEFINE_TEST(test_read_format_rar5_arm_filter)
 	/* Yes, RARv5 unpacker itself should calculate the CRC, but in case
 	 * the DONT_FAIL_ON_CRC_ERROR define option is enabled during compilation,
 	 * let's still fail the test if the unpacked data is wrong. */
-	assertEqualInt(crc32(0, buf, proper_size), 0x886F91EB);
+	assertEqualInt(libarchive_crc32(0, buf, proper_size), 0x886F91EB);
 
 	assertA(ARCHIVE_EOF == archive_read_next_header(a, &ae));
 	EPILOGUE();
@@ -870,7 +870,7 @@ DEFINE_TEST(test_read_format_rar5_block_by_block)
 		if(bytes_read <= 0)
 			break;
 
-		computed_crc = crc32(computed_crc, buf, bytes_read);
+		computed_crc = libarchive_crc32(computed_crc, buf, bytes_read);
 	}
 
 	assertEqualInt(computed_crc, 0x7CCA70CD);

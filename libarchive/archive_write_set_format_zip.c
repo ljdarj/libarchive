@@ -57,10 +57,7 @@
 #include "archive_random_private.h"
 #include "archive_write_private.h"
 #include "archive_write_set_format_private.h"
-
-#ifndef HAVE_ZLIB_H
 #include "archive_crc32.h"
-#endif
 
 #define ZIP_ENTRY_FLAG_ENCRYPTED	(1<<0)
 #define ZIP_ENTRY_FLAG_LENGTH_AT_END	(1<<3)

@@ -30,18 +30,12 @@
 #include <errno.h>
 #endif
 #include <time.h>
-#ifdef HAVE_ZLIB_H
-#include <zlib.h> /* crc32 */
-#endif
 #ifdef HAVE_LIMITS_H
 #include <limits.h>
 #endif
 
 #include "archive.h"
-#ifndef HAVE_ZLIB_H
 #include "archive_crc32.h"
-#endif
-
 #include "archive_entry.h"
 #include "archive_entry_locale.h"
 #include "archive_ppmd7_private.h"

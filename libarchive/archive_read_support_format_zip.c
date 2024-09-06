@@ -72,10 +72,7 @@
 #include "archive_rb.h"
 #include "archive_read_private.h"
 #include "archive_ppmd8_private.h"
-
-#ifndef HAVE_ZLIB_H
 #include "archive_crc32.h"
-#endif
 
 struct zip_entry {
 	struct archive_rb_node	node;

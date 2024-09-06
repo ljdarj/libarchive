@@ -1,4 +1,4 @@
-/*-
+/*-SPDX-License-Identifier: BSD-2-Clause
  * Copyright (c) 2009 Joerg  Sonnenberger
  * All rights reserved.
  *
@@ -31,15 +31,18 @@
 #endif
 
 #include <stddef.h>
-#ifdef HAVE_LZO_LZOCONF_H
-#include <lzo/lzoconf.h>
+#include "archive_cryptor_private.h"
+#ifdef ARCHIVE_CRYPTOR_USE_Apple_CommonCrypto
+#include <CommonCrypto/CommonCRC.h>
 
 static uint32_t
 libarchive_crc32(uint32_t crc, const void* _p, size_t len)
 {
-	return (uint32_t)lzo_crc32((lzo_uint32_t)crc, _p, (lzo_uint)len);
+	uint_64t result = crc;
+	CNCRC(kCN_CRC_32, _p, len, &result);
+	return (uint32_t)result;
 }
-#elif defined HAVE_ZLIB_H
+#elif HAVE_ZLIB_H
 #include <zlib.h>
 
 static uint32_t
@@ -47,13 +50,21 @@ libarchive_crc32(uint32_t crc, const void* _p, size_t len)
 {
 	return (uint32_t)crc32((unsigned long)crc, _p, (unsigned int)len);
 }
-#elif defined HAVE_LZMA_H
+#elif HAVE_LZMA_H
 #include <lzma.h>
 
 static uint32_t
 libarchive_crc32(uint32_t crc, const void* _p, size_t len)
 {
 	return lzma_crc32(_p, len, crc);
+}
+#elif HAVE_LZO_LZOCONF_H
+#include <lzo/lzoconf.h>
+
+static uint32_t
+libarchive_crc32(uint32_t crc, const void* _p, size_t len)
+{
+	return (uint32_t)lzo_crc32((lzo_uint32_t)crc, _p, (lzo_uint)len);
 }
 #else
 /*

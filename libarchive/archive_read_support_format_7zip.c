@@ -51,10 +51,7 @@
 #include "archive_private.h"
 #include "archive_read_private.h"
 #include "archive_endian.h"
-
-#ifndef HAVE_ZLIB_H
 #include "archive_crc32.h"
-#endif
 
 #define _7ZIP_SIGNATURE	"7z\xBC\xAF\x27\x1C"
 #define SFX_MIN_ADDR	0x27000
