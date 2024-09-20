@@ -209,8 +209,8 @@ struct zip {
 	struct archive_string_conv *sconv_utf8;
 	int			init_default_conversion;
 	int			process_mac_extensions;
-
-	char			init_decryption;
+	short		threads;
+	char		init_decryption;
 
 	/* Decryption buffer. */
 	/*
@@ -263,6 +263,29 @@ zip_read_data_deflate(struct archive_read *a, const void **buff,
 static int
 zip_read_data_zipx_lzma_alone(struct archive_read *a, const void **buff,
 	size_t *size, int64_t *offset);
+#endif
+
+#ifndef HAVE_LZMA_STREAM_DECODER_MT
+/* Dummy mt declarations, to avoid spaghetti includes below. Defined with
+ * macros to avoid compiler errors. */
+#define lzma_stream_decoder_mt(str, opt) dummy_mt(str, opt)
+#define lzma_mt dummy_options
+
+typedef struct {
+	uint64_t memlimit_threading;
+	uint64_t memlimit_stop;
+	char timeout;
+	char threads;
+	char flags;
+} dummy_options;
+
+static inline lzma_ret
+dummy_mt(lzma_stream* stream, const lzma_mt* options)
+{
+	(void)stream; /* UNUSED */
+	(void)options; /* UNUSED */
+	return LZMA_PROG_ERROR;
+}
 #endif
 
 /* This function is used by Ppmd8_DecodeSymbol during decompression of Ppmd8
@@ -1731,17 +1754,29 @@ zipx_xz_init(struct archive_read *a, struct zip *zip)
 {
 	lzma_ret r;
 
+#ifndef HAVE_LZMA_STREAM_DECODER_MT
+	zip->threads = 1;
+#endif
 	if(zip->zipx_lzma_valid) {
 		lzma_end(&zip->zipx_lzma_stream);
 		zip->zipx_lzma_valid = 0;
 	}
-
 	memset(&zip->zipx_lzma_stream, 0, sizeof(zip->zipx_lzma_stream));
-	r = lzma_stream_decoder(&zip->zipx_lzma_stream, UINT64_MAX, 0);
+	if (zip->threads == 1) {
+		r = lzma_stream_decoder(&zip->zipx_lzma_stream, UINT64_MAX, 0);
+	} else {
+		lzma_mt options = {
+			.threads = zip->threads,
+			.memlimit_threading = UINT64_MAX,
+			.memlimit_stop = UINT64_MAX,
+			.timeout = 0,
+			.flags = 0
+		};
+		r = lzma_stream_decoder_mt(&zip->zipx_lzma_stream, &options);
+	}
 	if (r != LZMA_OK) {
 		archive_set_error(&(a->archive), ARCHIVE_ERRNO_MISC,
-		    "xz initialization failed(%d)",
-		    r);
+		    "xz initialization failed(%d)", r);
 
 		return (ARCHIVE_FAILED);
 	}
@@ -1756,7 +1791,7 @@ zipx_xz_init(struct archive_read *a, struct zip *zip)
 	if (zip->uncompressed_buffer == NULL) {
 		archive_set_error(&a->archive, ENOMEM,
 		    "No memory for xz decompression");
-		    return (ARCHIVE_FATAL);
+		return (ARCHIVE_FATAL);
 	}
 
 	zip->decompress_init = 1;
@@ -3298,10 +3333,9 @@ static int
 archive_read_format_zip_options(struct archive_read *a,
     const char *key, const char *val)
 {
-	struct zip *zip;
+	struct zip *zip = (struct zip *)(a->format->data);
 	int ret = ARCHIVE_FAILED;
 
-	zip = (struct zip *)(a->format->data);
 	if (strcmp(key, "compat-2x")  == 0) {
 		/* Handle filenames as libarchive 2.x */
 		zip->init_default_conversion = (val != NULL) ? 1 : 0;
@@ -3330,6 +3364,27 @@ archive_read_format_zip_options(struct archive_read *a,
 		} else {
 			zip->crc32func = fake_crc32;
 			zip->ignore_crc32 = 1;
+		}
+		return (ARCHIVE_OK);
+	} else if (strcmp(key, "threads") == 0) {
+		char* endptr;
+		
+		if (val == NULL)
+			return (ARCHIVE_FAILED);
+		errno = 0;
+		zip->threads = (short)strtoul(val, &endptr, 10);
+		if (errno == 0 || *endptr != '\0') {
+			zip->threads = 1;
+			archive_set_error(&a->archive, ARCHIVE_ERRNO_MISC,
+			    "Illegal value '%s'", val);
+			return (ARCHIVE_FAILED);
+		}
+		if (zip->threads == 0) {
+#ifdef HAVE_LZMA_STREAM_DECODER_MT
+			zip->threads = lzma_cputhreads();
+#else
+			zip->threads = 1;
+#endif
 		}
 		return (ARCHIVE_OK);
 	} else if (strcmp(key, "mac-ext") == 0) {
@@ -3616,6 +3671,7 @@ archive_read_support_format_zip_streamable(struct archive *_a)
 	 */
 	zip->has_encrypted_entries = ARCHIVE_READ_FORMAT_ENCRYPTION_DONT_KNOW;
 	zip->crc32func = real_crc32;
+	zip->threads = 1;
 
 	r = __archive_read_register_format(a,
 	    zip,
@@ -4410,6 +4466,7 @@ archive_read_support_format_zip_seekable(struct archive *_a)
 	 */
 	zip->has_encrypted_entries = ARCHIVE_READ_FORMAT_ENCRYPTION_DONT_KNOW;
 	zip->crc32func = real_crc32;
+	zip->threads = 1;
 
 	r = __archive_read_register_format(a,
 	    zip,

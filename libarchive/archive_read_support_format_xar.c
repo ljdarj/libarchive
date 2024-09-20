@@ -107,6 +107,29 @@ archive_read_support_format_xar(struct archive *_a)
 #define SHA1_SIZE	20
 #define MAX_SUM_SIZE	20
 
+#ifndef HAVE_LZMA_STREAM_DECODER_MT
+/* Dummy mt declarations, to avoid spaghetti includes below. Defined with
+ * macros to avoid compiler errors. */
+#define lzma_stream_decoder_mt(str, opt) dummy_mt(str, opt)
+#define lzma_mt dummy_options
+
+typedef struct {
+	uint64_t memlimit_threading;
+	uint64_t memlimit_stop;
+	char timeout;
+	char threads;
+	char flags;
+} dummy_options;
+
+static inline lzma_ret
+dummy_mt(lzma_stream* stream, const lzma_mt* options)
+{
+	(void)stream; /* UNUSED */
+	(void)options; /* UNUSED */
+	return LZMA_PROG_ERROR;
+}
+#endif
+
 enum enctype {
 	NONE,
 	GZIP,
@@ -346,7 +369,7 @@ struct xar {
 	struct heap_queue	 file_queue;
 	struct xar_file		*hdlink_orgs;
 	struct hdlink		*hdlink_list;
-
+	short		 threads;
 	int	 		 entry_init;
 	uint64_t		 entry_total;
 	uint64_t		 entry_remaining;
@@ -371,6 +394,8 @@ struct xmlattr_list {
 };
 
 static int	xar_bid(struct archive_read *, int);
+static int	xar_read_options(struct archive_read *,
+		    const char *, const char *);
 static int	xar_read_header(struct archive_read *,
 		    struct archive_entry *);
 static int	xar_read_data(struct archive_read *,
@@ -461,7 +486,7 @@ archive_read_support_format_xar(struct archive *_a)
 	xar->file_queue.allocated = 0;
 	xar->file_queue.used = 0;
 	xar->file_queue.files = NULL;
-
+	xar->threads = 1;
 	r = __archive_read_register_format(a,
 	    xar,
 	    "xar",
@@ -477,6 +502,42 @@ archive_read_support_format_xar(struct archive *_a)
 	if (r != ARCHIVE_OK)
 		free(xar);
 	return (r);
+}
+
+static int
+xar_read_options(struct archive_read *a,
+    const char *key, const char *val)
+{
+	struct xar *xar = (struct xar *)(a->format->data);
+	int ret = ARCHIVE_FAILED;
+
+	if (strcmp(key, "threads") == 0) {
+		char* endptr;
+		
+		if (val == NULL)
+			return (ARCHIVE_FAILED);
+		errno = 0;
+		xar->threads = (short)strtoul(val, &endptr, 10);
+		if (errno == 0 || *endptr != '\0') {
+			xar->threads = 1;
+			archive_set_error(&a->archive, ARCHIVE_ERRNO_MISC,
+			    "Illegal value '%s'", val);
+			return (ARCHIVE_FAILED);
+		}
+		if (xar->threads == 0) {
+#ifdef HAVE_LZMA_STREAM_DECODER_MT
+			xar->threads = lzma_cputhreads();
+#else
+			xar->threads = 1;
+#endif
+		}
+		return (ARCHIVE_OK);
+	}
+
+	/* Note: The "warn" return is just to inform the options
+	 * supervisor that we didn't handle it.  It will generate
+	 * a suitable error if no one used this option. */
+	return (ARCHIVE_WARN);
 }
 
 static int
@@ -1451,11 +1512,10 @@ checksum_final(struct archive_read *a, const void *a_sum_val,
 static int
 decompression_init(struct archive_read *a, enum enctype encoding)
 {
-	struct xar *xar;
+	struct xar *xar = (struct xar *)(a->format->data);
 	const char *detail;
 	int r;
 
-	xar = (struct xar *)(a->format->data);
 	xar->rd_encoding = encoding;
 	switch (encoding) {
 	case NONE:
@@ -1521,17 +1581,34 @@ decompression_init(struct archive_read *a, enum enctype encoding)
 #endif
 	case XZ:
 	case LZMA:
+#ifndef HAVE_LZMA_STREAM_DECODER_MT
+	zip->threads = 1;
+#endif
 		if (xar->lzstream_valid) {
-			lzma_end(&(xar->lzstream));
+			lzma_end(&xar->lzstream);
 			xar->lzstream_valid = 0;
 		}
-		if (xar->entry_encoding == XZ)
-			r = lzma_stream_decoder(&(xar->lzstream),
+		memset(&xar->lzstream, 0, sizeof(xar->lzstream));
+		if (xar->entry_encoding == XZ) {
+			if (xar->threads == 1) {
+			r = lzma_stream_decoder(&xar->lzstream,
 			    LZMA_MEMLIMIT,/* memlimit */
 			    LZMA_CONCATENATED);
-		else
-			r = lzma_alone_decoder(&(xar->lzstream),
+			} else {
+				lzma_mt options = {
+					.threads = xar->threads,
+					.memlimit_threading = LZMA_MEMLIMIT,
+					.memlimit_stop = LZMA_MEMLIMIT,
+					.timeout = 0,
+					.flags = LZMA_CONCATENATED
+				};
+				r = lzma_stream_decoder_mt(&xar->lzstream, &options);
+			}
+		}
+		else {
+			r = lzma_alone_decoder(&xar->lzstream,
 			    LZMA_MEMLIMIT);/* memlimit */
+		}
 		if (r != LZMA_OK) {
 			switch (r) {
 			case LZMA_MEM_ERROR:

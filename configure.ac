@@ -475,8 +475,8 @@ if test "x$with_lzma" != "xno"; then
   # fools a naive AC_CHECK_LIB or AC_CHECK_FUNC, so we need
   # to do something more complex here:
   AC_CACHE_CHECK(
-    [whether we have multithread support in lzma],
-    ac_cv_lzma_has_mt,
+    [whether we have multithread compression support in lzma],
+    ac_cv_lzma_has_encoder_mt,
     [AC_LINK_IFELSE([
       AC_LANG_PROGRAM([[#include <lzma.h>]
                        [#if LZMA_VERSION < 50020000]
@@ -484,10 +484,25 @@ if test "x$with_lzma" != "xno"; then
                        [#endif]],
                       [[int ignored __attribute__((unused)); ignored = lzma_stream_encoder_mt(0, 0);]])],
       [ac_cv_lzma_has_mt=yes], [ac_cv_lzma_has_mt=no])])
-  if test "x$ac_cv_lzma_has_mt" != xno; then
+  if test "x$ac_cv_lzma_has_encoder_mt" != xno; then
 	  AC_DEFINE([HAVE_LZMA_STREAM_ENCODER_MT], [1], [Define to 1 if you have the `lzma_stream_encoder_mt' function.])
   fi
-
+  # 5.4.1 and not 5.4.0 for the multi-threaded decoder because, per XZ-Utils'
+  # changelog, 5.4.0 as an issue on some Windows builds which erroneously
+  # don't have it.
+  AC_CACHE_CHECK(
+    [whether we have multithread decompression support in lzma],
+    ac_cv_lzma_has_decoder_mt,
+    [AC_LINK_IFELSE([
+      AC_LANG_PROGRAM([[#include <lzma.h>]
+                       [#if LZMA_VERSION < 50040010]
+                       [#error unsupported]
+                       [#endif]],
+                      [[int ignored __attribute__((unused)); ignored = lzma_stream_decoder_mt(0, 0);]])],
+      [ac_cv_lzma_has_mt=yes], [ac_cv_lzma_has_mt=no])])
+  if test "x$ac_cv_lzma_has_decoder_mt" != xno; then
+	  AC_DEFINE([HAVE_LZMA_STREAM_DECODER_MT], [1], [Define to 1 if you have the `lzma_stream_decoder_mt' function.])
+  fi
   AC_CACHE_CHECK(
     [whether we have ARM64 filter support in lzma],
     ac_cv_lzma_has_arm64,
