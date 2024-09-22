@@ -253,6 +253,14 @@ have been concatenated together.
 Without this option, only the contents of
 the first concatenated archive would be read.
 .El
+.It Format xar
+.Bl -tag -compact -width indent
+.It Cm threads
+The value is interpreted as a decimal integer specifying the
+number of threads for multi-threaded xz decompression.
+If set to 0, libarchive will attempt to detect and use the number
+of active physical CPU cores.
+.El
 .It Format zip
 .Bl -tag -compact -width indent
 .It Cm compat-2x
@@ -273,6 +281,11 @@ Defaults to enabled on Mac OS, disabled on other platforms.
 Use
 .Cm !mac-ext
 to disable.
+.It Cm threads
+The value is interpreted as a decimal integer specifying the
+number of threads for multi-threaded xz decompression.
+If set to 0, libarchive will attempt to detect and use the number
+of active physical CPU cores.
 .El
 .El
 .\"

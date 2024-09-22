@@ -509,7 +509,6 @@ xar_read_options(struct archive_read *a,
     const char *key, const char *val)
 {
 	struct xar *xar = (struct xar *)(a->format->data);
-	int ret = ARCHIVE_FAILED;
 
 	if (strcmp(key, "threads") == 0) {
 		char* endptr;
@@ -1582,7 +1581,7 @@ decompression_init(struct archive_read *a, enum enctype encoding)
 	case XZ:
 	case LZMA:
 #ifndef HAVE_LZMA_STREAM_DECODER_MT
-	zip->threads = 1;
+		xar->threads = 1;
 #endif
 		if (xar->lzstream_valid) {
 			lzma_end(&xar->lzstream);
