@@ -491,7 +491,7 @@ archive_read_support_format_xar(struct archive *_a)
 	    xar,
 	    "xar",
 	    xar_bid,
-	    NULL,
+	    xar_read_options,
 	    xar_read_header,
 	    xar_read_data,
 	    xar_read_data_skip,
