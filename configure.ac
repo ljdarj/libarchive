@@ -483,7 +483,7 @@ if test "x$with_lzma" != "xno"; then
                        [#error unsupported]
                        [#endif]],
                       [[int ignored __attribute__((unused)); ignored = lzma_stream_encoder_mt(0, 0);]])],
-      [ac_cv_lzma_has_mt=yes], [ac_cv_lzma_has_mt=no])])
+      [ac_cv_lzma_has_encoder_mt=yes], [ac_cv_lzma_has_encoder_mt=no])])
   if test "x$ac_cv_lzma_has_encoder_mt" != xno; then
 	  AC_DEFINE([HAVE_LZMA_STREAM_ENCODER_MT], [1], [Define to 1 if you have the `lzma_stream_encoder_mt' function.])
   fi
@@ -499,7 +499,7 @@ if test "x$with_lzma" != "xno"; then
                        [#error unsupported]
                        [#endif]],
                       [[int ignored __attribute__((unused)); ignored = lzma_stream_decoder_mt(0, 0);]])],
-      [ac_cv_lzma_has_mt=yes], [ac_cv_lzma_has_mt=no])])
+      [ac_cv_lzma_has_decoder_mt=yes], [ac_cv_lzma_has_decoder_mt=no])])
   if test "x$ac_cv_lzma_has_decoder_mt" != xno; then
 	  AC_DEFINE([HAVE_LZMA_STREAM_DECODER_MT], [1], [Define to 1 if you have the `lzma_stream_decoder_mt' function.])
   fi
