@@ -39,7 +39,10 @@
 #include <sys/stat.h>
 #include <stddef.h>  /* for wchar_t */
 #include <stdio.h> /* For FILE * */
+#if ARCHIVE_VERSION_NUMBER < 4000000
+/* time_t and dev_t are slated to be removed from public interfaces at version 4.0 */
 #include <time.h> /* For time_t */
+#endif
 
 /*
  * Note: archive.h is for use outside of libarchive; the configuration
@@ -92,6 +95,16 @@ typedef long la_ssize_t;
 # include <unistd.h>  /* ssize_t */
 typedef ssize_t la_ssize_t;
 # endif
+#endif
+
+# if ARCHIVE_VERSION_NUMBER < 4000000
+/* Use the platform types for dev_t and time_t */
+#define __LA_TIME_T time_t
+#define __LA_DEV_T dev_t
+#else
+/* Use 64-bytes integer types for dev_t and time_t */
+#define __LA_TIME_T la_int64_t
+#define __LA_DEV_T la_int64_t
 #endif
 
 /* Large file support for Android */
@@ -1169,7 +1182,7 @@ __LA_DECL int	archive_match_time_excluded(struct archive *,
 #define ARCHIVE_MATCH_EQUAL	(0x0010)
 /* Set inclusion time. */
 __LA_DECL int	archive_match_include_time(struct archive *, int _flag,
-		    time_t _sec, long _nsec);
+		    __LA_TIME_T _sec, long _nsec);
 /* Set inclusion time by a date string. */
 __LA_DECL int	archive_match_include_date(struct archive *, int _flag,
 		    const char *_datestr);
