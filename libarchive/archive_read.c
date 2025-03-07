@@ -64,6 +64,8 @@ static int  _archive_filter_count(struct archive *);
 static int	_archive_read_close(struct archive *);
 static int	_archive_read_data_block(struct archive *,
 		    const void **, size_t *, int64_t *);
+static int	_archive_read_comment(struct archive *,
+		    const char **, size_t *);
 static int	_archive_read_free(struct archive *);
 static int	_archive_read_next_header(struct archive *,
 		    struct archive_entry **);
@@ -80,6 +82,7 @@ archive_read_vtable = {
 	.archive_read_data_block = _archive_read_data_block,
 	.archive_read_next_header = _archive_read_next_header,
 	.archive_read_next_header2 = _archive_read_next_header2,
+	.archive_read_comment = _archive_read_comment,
 	.archive_free = _archive_read_free,
 	.archive_close = _archive_read_close,
 };
@@ -987,6 +990,30 @@ _archive_read_data_block(struct archive *_a,
 }
 
 static int
+default_read_comment(struct archive *_a, const char **buff, size_t *size)
+{
+	return ARCHIVE_WARN;
+}
+
+static int
+_archive_read_comment(struct archive *_a,
+    const void **buff, size_t *size, int64_t *offset)
+{
+	struct archive_read *a = (struct archive_read *)_a;
+	archive_check_magic(_a, ARCHIVE_READ_MAGIC, ARCHIVE_STATE_DATA,
+	    "archive_read_comment");
+
+	if (a->format->read_comment == NULL) {
+		archive_set_error(&a->archive, ARCHIVE_ERRNO_PROGRAMMER,
+		    "Internal error: "
+		    "No format->read_comment function registered");
+		return (ARCHIVE_FATAL);
+	}
+
+	return (a->format->read_comment)(a, buff, size, offset);
+}
+
+static int
 close_filters(struct archive_read *a)
 {
 	struct archive_read_filter *f = a->filter;
@@ -1189,7 +1216,8 @@ __archive_read_register_format(struct archive_read *a,
     int64_t (*seek_data)(struct archive_read *, int64_t, int),
     int (*cleanup)(struct archive_read *),
     int (*format_capabilities)(struct archive_read *),
-    int (*has_encrypted_entries)(struct archive_read *))
+    int (*has_encrypted_entries)(struct archive_read *),
+    int (*read_comment)(struct archive_read *, char **, size_t *))
 {
 	int i, number_slots;
 
@@ -1214,6 +1242,9 @@ __archive_read_register_format(struct archive_read *a,
 			a->formats[i].name = name;
 			a->formats[i].format_capabilties = format_capabilities;
 			a->formats[i].has_encrypted_entries = has_encrypted_entries;
+			a->formats[i].read_comment = read_comment == NULL
+			  ? default_read_comment
+			  :;
 			return (ARCHIVE_OK);
 		}
 	}

@@ -665,6 +665,22 @@ __LA_DECL int archive_read_add_passphrase(struct archive *, const char *);
 __LA_DECL int archive_read_set_passphrase_callback(struct archive *,
 			    void *client_data, archive_passphrase_callback *);
 
+/*
+ * Get the archive comment. Returns ARCHIVE_WARN if the format doesn't
+ * support them, ARCHIVE_OK otherwise. The char** parameter is libarchive
+ * to write a pointer to the comment in, NULL is written there if there
+ * aren't any and the size_t* parameter is for libarchive to write the
+ * comment size in, it should be ignored if the comment is NULL.
+ */
+__LA_DECL int archive_get_comment(struct archive *, char **, size_t *);
+/*
+ * Set the archive comment. Returns ARCHIVE_WARN if the format doesn't support
+ * them, ARCHIVE_OK otherwise. The char* parameter is the comment data, put NULL
+ * to clear the comment, the size_t parameter is the size of the comment, it's
+ * ignored if the data is NULL. 
+ */
+__LA_DECL int archive_set_comment(struct archive *, const char *, size_t);
+
 
 /*-
  * Convenience function to recreate the current entry (whose header
