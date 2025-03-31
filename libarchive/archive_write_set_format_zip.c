@@ -130,15 +130,6 @@ enum encryption {
 #define AUTH_CODE_SIZE		10
 /**/
 #define MAX_DERIVED_KEY_BUF_SIZE (AES_MAX_KEY_SIZE * 2 + 2)
-#define NTFS_EPOC_TIME ARCHIVE_LITERAL_ULL(11644473600)
-#define NTFS_TICKS ARCHIVE_LITERAL_ULL(10000000)
-#define DOS_MIN_TIME 0x00210000U
-#define DOS_MAX_TIME 0xff9fbf7dU
-/* The min/max DOS Unix time are locale-dependant, so they're static variables,
- * initialised on first use. */
-static char dos_initialised = 0;
-static int64_t dos_max_unix;
-static int64_t dos_min_unix;
 
 struct cd_segment {
 	struct cd_segment *next;
@@ -800,53 +791,6 @@ is_all_ascii(const char *p)
 			return (0);
 	}
 	return (1);
-}
-
-/* Convert Unix sec/nsec to NTFS time */
-static uint64_t
-unix_to_ntfs(int64_t secs, uint32_t nsecs)
-{
-	uint64_t ntfs = secs + NTFS_EPOC_TIME;
-	ntfs *= NTFS_TICKS;
-	return ntfs + nsecs/100;
-}
-
-/* Convert an MSDOS-style date/time into Unix-style time. */
-static time_t
-zip_time(uint32_t p)
-{
-	int msTime, msDate;
-	struct tm ts;
-
-	msTime = (p & 0xffff);
-	msDate = (p >> 16);
-
-	memset(&ts, 0, sizeof(ts));
-	ts.tm_year = ((msDate >> 9) & 0x7f) + 80; /* Years since 1900. */
-	ts.tm_mon = ((msDate >> 5) & 0x0f) - 1; /* Month number. */
-	ts.tm_mday = msDate & 0x1f; /* Day of month. */
-	ts.tm_hour = (msTime >> 11) & 0x1f;
-	ts.tm_min = (msTime >> 5) & 0x3f;
-	ts.tm_sec = (msTime << 1) & 0x3e;
-	ts.tm_isdst = -1;
-	return mktime(&ts);
-}
-
-/* Check if time fits in 32-bits Unix time */
-static char
-fits_in_unix(int64_t secs) {
-	return secs >= INT32_MIN && secs <= INT32_MAX;
-}
-
-/* Check if time fits in DOS time */
-static char
-fits_in_dos(int64_t secs) {
-	if (!dos_initialised) {
-		dos_max_unix = zip_time(DOS_MAX_TIME);
-		dos_min_unix = zip_time(DOS_MIN_TIME);
-		dos_initialised = 1;
-	}
-	return secs >= dos_min_unix && secs <= dos_max_unix;
 }
 
 static int
