@@ -1,5 +1,5 @@
 /*-
- * Copyright (c) 2003-2007 Tim Kientzle
+ * Copyright (c) 2011 Michihiro NAKAJIMA
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -21,22 +21,37 @@
  * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF
  * THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ *
+ * $FreeBSD$
  */
 
-/*
- * This header is the first thing included in any of the libarchive_fe
- * source files.  As far as possible, platform-specific issues should
- * be dealt with here and not within individual source files.
- */
+#ifndef BSDPAX_WINDOWS_H
+#define	BSDPAX_WINDOWS_H 1
+#include <windows.h>
 
-#ifndef LAFE_PLATFORM_H_INCLUDED
-#define	LAFE_PLATFORM_H_INCLUDED
+#define	geteuid()	0
 
-#if defined(PLATFORM_CONFIG_H)
-/* Use hand-built config.h in environments that need it. */
-#include PLATFORM_CONFIG_H
-#else
-/* Read config.h or die trying. */
-#include "config.h"
+#ifndef __WATCOMC__
+
+#ifndef S_IFIFO
+#define	S_IFIFO	0010000 /* pipe */
 #endif
+
+#include <string.h>  /* Must include before redefining 'strdup' */
+#if !defined(__BORLANDC__)
+#define	strdup _strdup
 #endif
+#if !defined(__BORLANDC__)
+#define	getcwd _getcwd
+#endif
+
+#ifndef S_ISREG
+#define	S_ISREG(a)	(a & _S_IFREG)
+#endif
+#ifndef S_ISBLK
+#define	S_ISBLK(a)	(0)
+#endif
+
+#endif
+
+#endif /* BSDPAX_WINDOWS_H */

@@ -22,21 +22,55 @@
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF
  * THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
+#include "test.h"
+__FBSDID("$FreeBSD$");
 
 /*
- * This header is the first thing included in any of the libarchive_fe
- * source files.  As far as possible, platform-specific issues should
- * be dealt with here and not within individual source files.
+ * Test that "--help", "-h", and "-W help" options all work and
+ * generate reasonable output.
  */
 
-#ifndef LAFE_PLATFORM_H_INCLUDED
-#define	LAFE_PLATFORM_H_INCLUDED
+static int
+in_first_line(const char *p, const char *substring)
+{
+	size_t l = strlen(substring);
 
-#if defined(PLATFORM_CONFIG_H)
-/* Use hand-built config.h in environments that need it. */
-#include PLATFORM_CONFIG_H
-#else
-/* Read config.h or die trying. */
-#include "config.h"
-#endif
-#endif
+	while (*p != '\0' && *p != '\n') {
+		if (memcmp(p, substring, l) == 0)
+			return (1);
+		++p;
+	}
+	return (0);
+}
+
+DEFINE_TEST(test_help)
+{
+	int r;
+	char *p;
+	size_t plen;
+
+	/* Exercise --help option. */
+	r = systemf("%s --help >help.stdout 2>help.stderr", testprog);
+	assertEqualInt(r, 0);
+	failure("--help should generate nothing to stderr.");
+	assertEmptyFile("help.stderr");
+	/* Help message should start with name of program. */
+	p = slurpfile(&plen, "help.stdout");
+	failure("Help output should be long enough.");
+	assert(plen >= 6);
+	failure("First line of help output should contain 'bsdpax': %s", p);
+	assert(in_first_line(p, "bsdpax"));
+	/*
+	 * TODO: Extend this check to further verify that --help output
+	 * looks approximately right.
+	 */
+	free(p);
+
+	/* -W help should be another synonym. */
+	r = systemf("%s -W help >Whelp.stdout 2>Whelp.stderr", testprog);
+	assertEqualInt(r, 0);
+	failure("-W help should generate nothing to stderr.");
+	assertEmptyFile("Whelp.stderr");
+	failure("stdout should be same for -W help and --help");
+	assertEqualFile("Whelp.stdout", "help.stdout");
+}

@@ -1,5 +1,5 @@
 /*-
- * Copyright (c) 2003-2007 Tim Kientzle
+ * Copyright (c) 2012 Michihiro NAKAJIMA
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -22,21 +22,25 @@
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF
  * THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
+#include "test.h"
+__FBSDID("$FreeBSD$");
 
-/*
- * This header is the first thing included in any of the libarchive_fe
- * source files.  As far as possible, platform-specific issues should
- * be dealt with here and not within individual source files.
- */
+DEFINE_TEST(test_extract_tar_grz)
+{
+	const char *reffile = "test_extract.tar.grz";
 
-#ifndef LAFE_PLATFORM_H_INCLUDED
-#define	LAFE_PLATFORM_H_INCLUDED
+	extract_reference_file(reffile);
+	if (canGrzip()) {
+		assertEqualInt(0, systemf("%s -r < %s >test.out 2>test.err",
+		    testprog, reffile));
 
-#if defined(PLATFORM_CONFIG_H)
-/* Use hand-built config.h in environments that need it. */
-#include PLATFORM_CONFIG_H
-#else
-/* Read config.h or die trying. */
-#include "config.h"
-#endif
-#endif
+		assertFileExists("file1");
+		assertTextFileContents("contents of file1.\n", "file1");
+		assertFileExists("file2");
+		assertTextFileContents("contents of file2.\n", "file2");
+		assertEmptyFile("test.out");
+		assertEmptyFile("test.err");
+	} else {
+		skipping("It seems grzip is not supported on this platform");
+	}
+}

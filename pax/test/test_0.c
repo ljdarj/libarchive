@@ -22,21 +22,54 @@
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF
  * THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
+#include "test.h"
+__FBSDID("$FreeBSD$");
 
 /*
- * This header is the first thing included in any of the libarchive_fe
- * source files.  As far as possible, platform-specific issues should
- * be dealt with here and not within individual source files.
+ * This first test does basic sanity checks on the environment.  For
+ * most of these, we just exit on failure.
  */
-
-#ifndef LAFE_PLATFORM_H_INCLUDED
-#define	LAFE_PLATFORM_H_INCLUDED
-
-#if defined(PLATFORM_CONFIG_H)
-/* Use hand-built config.h in environments that need it. */
-#include PLATFORM_CONFIG_H
+#if !defined(_WIN32) || defined(__CYGWIN__)
+#define DEV_NULL "/dev/null"
 #else
-/* Read config.h or die trying. */
-#include "config.h"
+#define DEV_NULL "NUL"
 #endif
-#endif
+
+DEFINE_TEST(test_0)
+{
+	struct stat st;
+
+	failure("File %s does not exist?!", testprog);
+	if (!assertEqualInt(0, stat(testprogfile, &st))) {
+		fprintf(stderr,
+		    "\nFile %s does not exist; aborting test.\n\n",
+		    testprog);
+		exit(1);
+	}
+
+	failure("%s is not executable?!", testprog);
+	if (!assert((st.st_mode & 0111) != 0)) {
+		fprintf(stderr,
+		    "\nFile %s not executable; aborting test.\n\n",
+		    testprog);
+		exit(1);
+	}
+
+	/*
+	 * Try to succesfully run the program; this requires that
+	 * we know some option that will succeed.
+	 */
+	if (0 == systemf("%s --version >" DEV_NULL, testprog)) {
+		/* This worked. */
+	} else if (0 == systemf("%s -W version >" DEV_NULL, testprog)) {
+		/* This worked. */
+	} else {
+		failure("Unable to successfully run any of the following:\n"
+		    "  * %s --version\n"
+		    "  * %s -W version\n",
+		    testprog, testprog);
+		assert(0);
+	}
+
+	/* TODO: Ensure that our reference files are available. */
+}

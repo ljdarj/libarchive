@@ -1,5 +1,6 @@
 /*-
  * Copyright (c) 2003-2007 Tim Kientzle
+ * Copyright (c) 2012 Michihiro NAKAJIMA
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -22,21 +23,35 @@
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF
  * THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
+#include "test.h"
+__FBSDID("$FreeBSD$");
 
-/*
- * This header is the first thing included in any of the libarchive_fe
- * source files.  As far as possible, platform-specific issues should
- * be dealt with here and not within individual source files.
- */
+DEFINE_TEST(test_option_xz)
+{
+	char *p;
+	int r;
+	size_t s;
 
-#ifndef LAFE_PLATFORM_H_INCLUDED
-#define	LAFE_PLATFORM_H_INCLUDED
+	/* Create a file. */
+	assertMakeFile("f", 0644, "a");
 
-#if defined(PLATFORM_CONFIG_H)
-/* Use hand-built config.h in environments that need it. */
-#include PLATFORM_CONFIG_H
-#else
-/* Read config.h or die trying. */
-#include "config.h"
-#endif
-#endif
+	/* Archive it with xz compression. */
+	r = systemf("%s -w --xz f >archive.out 2>archive.err",
+	    testprog);
+	p = slurpfile(&s, "archive.err");
+	p[s] = '\0';
+	if (r != 0) {
+		if (strstr(p, "compression not available") != NULL) {
+			skipping("This version of bsdpax was compiled "
+			    "without xz support");
+			return;
+		}
+		failure("--xz option is broken");
+		assertEqualInt(r, 0);
+		return;
+	}
+	/* Check that the archive file has an xz signature. */
+	p = slurpfile(&s, "archive.out");
+	assert(s > 2);
+	assertEqualMem(p, "\xFD\x37\x7A\x58\x5A\x00", 6);
+}

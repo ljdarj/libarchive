@@ -1,5 +1,5 @@
 /*-
- * Copyright (c) 2003-2007 Tim Kientzle
+ * Copyright (c) 2010 Tim Kientzle
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -22,21 +22,40 @@
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF
  * THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
+#include "test.h"
+__FBSDID("$FreeBSD$");
 
-/*
- * This header is the first thing included in any of the libarchive_fe
- * source files.  As far as possible, platform-specific issues should
- * be dealt with here and not within individual source files.
- */
+DEFINE_TEST(test_option_d)
+{
+	assertMakeDir("d1", 0755);
+	assertMakeFile("d1/file1", 0644, "d1/file1");
 
-#ifndef LAFE_PLATFORM_H_INCLUDED
-#define	LAFE_PLATFORM_H_INCLUDED
+	/* Test 1: -w without -d */
+	assertMakeDir("test1", 0755);
+	assertEqualInt(0,
+	    systemf("%s -wf test1/archive.tar d1 >test1/c.out 2>test1/c.err", testprog));
+	assertChdir("test1");
+	assertEmptyFile("c.out");
+	assertEmptyFile("c.err");
+	assertEqualInt(0,
+	    systemf("%s -rf archive.tar >x.out 2>x.err", testprog));
+	assertEmptyFile("x.out");
+	assertEmptyFile("x.err");
+	assertFileContents("d1/file1", 8, "d1/file1");
+	assertChdir("..");
 
-#if defined(PLATFORM_CONFIG_H)
-/* Use hand-built config.h in environments that need it. */
-#include PLATFORM_CONFIG_H
-#else
-/* Read config.h or die trying. */
-#include "config.h"
-#endif
-#endif
+	/* Test 2: -w with -d */
+	assertMakeDir("test2", 0755);
+	assertEqualInt(0,
+	    systemf("%s -wdf test2/archive.tar d1 >test2/c.out 2>test2/c.err", testprog));
+	assertChdir("test2");
+	assertEmptyFile("c.out");
+	assertEmptyFile("c.err");
+	assertEqualInt(0,
+	    systemf("%s -rf archive.tar >x.out 2>x.err", testprog));
+	assertEmptyFile("x.out");
+	assertEmptyFile("x.err");
+	assertIsDir("d1", 0755);
+	assertFileNotExists("d1/file1");
+	assertChdir("..");
+}

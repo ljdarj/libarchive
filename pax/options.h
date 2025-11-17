@@ -1,12 +1,13 @@
 /*-
- * Copyright (c) 2003-2007 Tim Kientzle
+ * Copyright (c) 2011 Michihiro NAKAJIMA
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
  * are met:
  * 1. Redistributions of source code must retain the above copyright
- *    notice, this list of conditions and the following disclaimer.
+ *    notice, this list of conditions and the following disclaimer
+ *    in this position and unchanged.
  * 2. Redistributions in binary form must reproduce the above copyright
  *    notice, this list of conditions and the following disclaimer in the
  *    documentation and/or other materials provided with the distribution.
@@ -21,22 +22,27 @@
  * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF
  * THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ *
+ * $FreeBSD$
  */
 
-/*
- * This header is the first thing included in any of the libarchive_fe
- * source files.  As far as possible, platform-specific issues should
- * be dealt with here and not within individual source files.
- */
+#ifndef OPTIONS_H
+#define OPTIONS_H
 
-#ifndef LAFE_PLATFORM_H_INCLUDED
-#define	LAFE_PLATFORM_H_INCLUDED
+struct archive;
+struct archive_entry;
+struct bsdpax_options;
 
-#if defined(PLATFORM_CONFIG_H)
-/* Use hand-built config.h in environments that need it. */
-#include PLATFORM_CONFIG_H
-#else
-/* Read config.h or die trying. */
-#include "config.h"
-#endif
+typedef int (*bsdpax_options_callback)(struct archive *, const char *);
+
+void	bsdpax_init_options(struct bsdpax_options **);
+void	bsdpax_free_options(struct bsdpax_options *);
+void	bsdpax_add_options(struct bsdpax_options *, const char *);
+int	bsdpax_has_listopt(struct bsdpax_options *);
+int	bsdpax_entry_fprintf(struct bsdpax_options *, FILE *,
+	    struct archive_entry *);
+void	bsdpax_set_options(struct bsdpax_options *, bsdpax_options_callback,
+	    struct archive *);
+void	bsdpax_edit_entry(struct bsdpax_options *, struct archive_entry *);
+
 #endif

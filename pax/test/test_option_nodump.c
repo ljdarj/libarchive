@@ -1,5 +1,5 @@
 /*-
- * Copyright (c) 2003-2007 Tim Kientzle
+ * Copyright (c) 2012 Michihiro NAKAJIMA
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -22,21 +22,47 @@
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF
  * THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
+#include "test.h"
+__FBSDID("$FreeBSD$");
 
-/*
- * This header is the first thing included in any of the libarchive_fe
- * source files.  As far as possible, platform-specific issues should
- * be dealt with here and not within individual source files.
- */
+DEFINE_TEST(test_option_nodump)
+{
 
-#ifndef LAFE_PLATFORM_H_INCLUDED
-#define	LAFE_PLATFORM_H_INCLUDED
+	if (!canNodump()) {
+		skipping("Can't test nodump on this filesystem");
+		return;
+	}
 
-#if defined(PLATFORM_CONFIG_H)
-/* Use hand-built config.h in environments that need it. */
-#include PLATFORM_CONFIG_H
-#else
-/* Read config.h or die trying. */
-#include "config.h"
-#endif
-#endif
+	assertMakeFile("file1", 0644, "file1");
+	assertMakeFile("file2", 0644, "file2");
+	assertMakeFile("file3", 0644, "file3");
+	assertNodump("file2");
+
+	/* Test 1: Without --nodump */
+	assertEqualInt(0, systemf("%s -wf test1.tar file1 file2 file3",
+	    testprog));
+	assertMakeDir("test1", 0755);
+	assertChdir("test1");
+	assertEqualInt(0,
+	    systemf("%s -rf ../test1.tar >test.out 2>test.err", testprog));
+	assertFileContents("file1", 5, "file1");
+	assertFileContents("file2", 5, "file2");
+	assertFileContents("file3", 5, "file3");
+	assertEmptyFile("test.out");
+	assertEmptyFile("test.err");
+	assertChdir("..");
+
+	/* Test 2: With --nodump */
+	assertEqualInt(0, systemf("%s -wf test2.tar --nodump file1 file2 file3",
+	    testprog));
+	assertMakeDir("test2", 0755);
+	assertChdir("test2");
+	assertEqualInt(0,
+	    systemf("%s -rf ../test2.tar >test.out 2>test.err", testprog));
+	assertFileContents("file1", 5, "file1");
+	assertFileNotExists("file2");
+	assertFileContents("file3", 5, "file3");
+	assertEmptyFile("test.out");
+	assertEmptyFile("test.err");
+	assertChdir("..");
+}
