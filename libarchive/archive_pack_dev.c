@@ -33,13 +33,6 @@
 
 #include "archive_platform.h"
 
-#if HAVE_SYS_CDEFS_H
-#include <sys/cdefs.h>
-#endif
-#if !defined(lint)
-__RCSID("$NetBSD$");
-#endif /* not lint */
-
 #ifdef HAVE_LIMITS_H
 #include <limits.h>
 #endif
@@ -57,6 +50,13 @@ __RCSID("$NetBSD$");
 #ifdef HAVE_SYS_STAT_H
 #include <sys/stat.h>
 #endif
+#if MAJOR_IN_MKDEV
+#include <sys/mkdev.h>
+#define HAVE_MAJOR
+#elif MAJOR_IN_SYSMACROS
+#include <sys/sysmacros.h>
+#define HAVE_MAJOR
+#endif
 #ifdef HAVE_UNISTD_H
 #include <unistd.h>
 #endif
@@ -70,7 +70,7 @@ static	pack_t	pack_12_20;
 static	pack_t	pack_14_18;
 static	pack_t	pack_8_24;
 static	pack_t	pack_bsdos;
-static	int	compare_format(const void *, const void *);
+static	int	__LA_LIBC_CC compare_format(const void *, const void *);
 
 static const char iMajorError[] = "invalid major number";
 static const char iMinorError[] = "invalid minor number";
@@ -103,15 +103,15 @@ static const char tooManyFields[] = "too many fields for format";
 
 /* exported */
 dev_t
-pack_native(int n, u_long numbers[], const char **error)
+pack_native(int n, unsigned long numbers[], const char **error)
 {
 	dev_t dev = 0;
 
 	if (n == 2) {
 		dev = apd_makedev(numbers[0], numbers[1]);
-		if ((u_long)major(dev) != numbers[0])
+		if ((unsigned long)major(dev) != numbers[0])
 			*error = iMajorError;
-		else if ((u_long)minor(dev) != numbers[1])
+		else if ((unsigned long)minor(dev) != numbers[1])
 			*error = iMinorError;
 	} else
 		*error = tooManyFields;
@@ -120,15 +120,15 @@ pack_native(int n, u_long numbers[], const char **error)
 
 
 static dev_t
-pack_netbsd(int n, u_long numbers[], const char **error)
+pack_netbsd(int n, unsigned long numbers[], const char **error)
 {
 	dev_t dev = 0;
 
 	if (n == 2) {
 		dev = makedev_netbsd(numbers[0], numbers[1]);
-		if ((u_long)major_netbsd(dev) != numbers[0])
+		if ((unsigned long)major_netbsd(dev) != numbers[0])
 			*error = iMajorError;
-		else if ((u_long)minor_netbsd(dev) != numbers[1])
+		else if ((unsigned long)minor_netbsd(dev) != numbers[1])
 			*error = iMinorError;
 	} else
 		*error = tooManyFields;
@@ -142,15 +142,15 @@ pack_netbsd(int n, u_long numbers[], const char **error)
 					 (((y) << 0) & 0xffff00ff)))
 
 static dev_t
-pack_freebsd(int n, u_long numbers[], const char **error)
+pack_freebsd(int n, unsigned long numbers[], const char **error)
 {
 	dev_t dev = 0;
 
 	if (n == 2) {
 		dev = makedev_freebsd(numbers[0], numbers[1]);
-		if ((u_long)major_freebsd(dev) != numbers[0])
+		if ((unsigned long)major_freebsd(dev) != numbers[0])
 			*error = iMajorError;
-		if ((u_long)minor_freebsd(dev) != numbers[1])
+		if ((unsigned long)minor_freebsd(dev) != numbers[1])
 			*error = iMinorError;
 	} else
 		*error = tooManyFields;
@@ -164,15 +164,15 @@ pack_freebsd(int n, u_long numbers[], const char **error)
 					 (((y) << 0) & 0x000000ff)))
 
 static dev_t
-pack_8_8(int n, u_long numbers[], const char **error)
+pack_8_8(int n, unsigned long numbers[], const char **error)
 {
 	dev_t dev = 0;
 
 	if (n == 2) {
 		dev = makedev_8_8(numbers[0], numbers[1]);
-		if ((u_long)major_8_8(dev) != numbers[0])
+		if ((unsigned long)major_8_8(dev) != numbers[0])
 			*error = iMajorError;
-		if ((u_long)minor_8_8(dev) != numbers[1])
+		if ((unsigned long)minor_8_8(dev) != numbers[1])
 			*error = iMinorError;
 	} else
 		*error = tooManyFields;
@@ -186,15 +186,15 @@ pack_8_8(int n, u_long numbers[], const char **error)
 					 (((y) <<  0) & 0x000fffff)))
 
 static dev_t
-pack_12_20(int n, u_long numbers[], const char **error)
+pack_12_20(int n, unsigned long numbers[], const char **error)
 {
 	dev_t dev = 0;
 
 	if (n == 2) {
 		dev = makedev_12_20(numbers[0], numbers[1]);
-		if ((u_long)major_12_20(dev) != numbers[0])
+		if ((unsigned long)major_12_20(dev) != numbers[0])
 			*error = iMajorError;
-		if ((u_long)minor_12_20(dev) != numbers[1])
+		if ((unsigned long)minor_12_20(dev) != numbers[1])
 			*error = iMinorError;
 	} else
 		*error = tooManyFields;
@@ -208,15 +208,15 @@ pack_12_20(int n, u_long numbers[], const char **error)
 					 (((y) <<  0) & 0x0003ffff)))
 
 static dev_t
-pack_14_18(int n, u_long numbers[], const char **error)
+pack_14_18(int n, unsigned long numbers[], const char **error)
 {
 	dev_t dev = 0;
 
 	if (n == 2) {
 		dev = makedev_14_18(numbers[0], numbers[1]);
-		if ((u_long)major_14_18(dev) != numbers[0])
+		if ((unsigned long)major_14_18(dev) != numbers[0])
 			*error = iMajorError;
-		if ((u_long)minor_14_18(dev) != numbers[1])
+		if ((unsigned long)minor_14_18(dev) != numbers[1])
 			*error = iMinorError;
 	} else
 		*error = tooManyFields;
@@ -230,15 +230,15 @@ pack_14_18(int n, u_long numbers[], const char **error)
 					 (((y) <<  0) & 0x00ffffff)))
 
 static dev_t
-pack_8_24(int n, u_long numbers[], const char **error)
+pack_8_24(int n, unsigned long numbers[], const char **error)
 {
 	dev_t dev = 0;
 
 	if (n == 2) {
 		dev = makedev_8_24(numbers[0], numbers[1]);
-		if ((u_long)major_8_24(dev) != numbers[0])
+		if ((unsigned long)major_8_24(dev) != numbers[0])
 			*error = iMajorError;
-		if ((u_long)minor_8_24(dev) != numbers[1])
+		if ((unsigned long)minor_8_24(dev) != numbers[1])
 			*error = iMinorError;
 	} else
 		*error = tooManyFields;
@@ -254,23 +254,23 @@ pack_8_24(int n, u_long numbers[], const char **error)
 					 (((z) <<  0) & 0x000000ff)))
 
 static dev_t
-pack_bsdos(int n, u_long numbers[], const char **error)
+pack_bsdos(int n, unsigned long numbers[], const char **error)
 {
 	dev_t dev = 0;
 
 	if (n == 2) {
 		dev = makedev_12_20(numbers[0], numbers[1]);
-		if ((u_long)major_12_20(dev) != numbers[0])
+		if ((unsigned long)major_12_20(dev) != numbers[0])
 			*error = iMajorError;
-		if ((u_long)minor_12_20(dev) != numbers[1])
+		if ((unsigned long)minor_12_20(dev) != numbers[1])
 			*error = iMinorError;
 	} else if (n == 3) {
 		dev = makedev_12_12_8(numbers[0], numbers[1], numbers[2]);
-		if ((u_long)major_12_12_8(dev) != numbers[0])
+		if ((unsigned long)major_12_12_8(dev) != numbers[0])
 			*error = iMajorError;
-		if ((u_long)unit_12_12_8(dev) != numbers[1])
+		if ((unsigned long)unit_12_12_8(dev) != numbers[1])
 			*error = "invalid unit number";
-		if ((u_long)subunit_12_12_8(dev) != numbers[2])
+		if ((unsigned long)subunit_12_12_8(dev) != numbers[2])
 			*error = "invalid subunit number";
 	} else
 		*error = tooManyFields;
@@ -280,7 +280,7 @@ pack_bsdos(int n, u_long numbers[], const char **error)
 
 		/* list of formats and pack functions */
 		/* this list must be sorted lexically */
-static struct format {
+static const struct format {
 	const char	*name;
 	pack_t		*pack;
 } formats[] = {
@@ -303,6 +303,7 @@ static struct format {
 };
 
 static int
+__LA_LIBC_CC
 compare_format(const void *key, const void *element)
 {
 	const char		*name;

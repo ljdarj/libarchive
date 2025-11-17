@@ -23,7 +23,6 @@
  * THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 #include "test.h"
-__FBSDID("$FreeBSD$");
 
 #define __LIBARCHIVE_TEST
 #include "archive_pathmatch.h"
@@ -51,6 +50,10 @@ DEFINE_TEST(test_archive_pathmatch)
 	assertEqualInt(0, archive_pathmatch("a/b", "a/b/c", 0));
 	assertEqualInt(0, archive_pathmatch("a/b/c", "a/b/", 0));
 	assertEqualInt(0, archive_pathmatch("a/b/c", "a/b", 0));
+
+    /* Null string and non-empty pattern returns false. */
+	assertEqualInt(0, archive_pathmatch("a/b/c", NULL, 0));
+	assertEqualInt(0, archive_pathmatch_w(L"a/b/c", NULL, 0));
 
 	/* Empty pattern only matches empty string. */
 	assertEqualInt(1, archive_pathmatch("","", 0));
@@ -208,9 +211,24 @@ DEFINE_TEST(test_archive_pathmatch)
 	assertEqualInt(1,
 	    archive_pathmatch("b/c/d", "a/b/c/d", PATHMATCH_NO_ANCHOR_START));
 	assertEqualInt(0,
+	    archive_pathmatch("^b/c/d", "a/b/c/d", PATHMATCH_NO_ANCHOR_START));
+	assertEqualInt(0,
+	    archive_pathmatch("/b/c/d", "a/b/c/d", PATHMATCH_NO_ANCHOR_START));
+	assertEqualInt(0,
+	    archive_pathmatch("a/b/c", "a/b/c/d", PATHMATCH_NO_ANCHOR_START));
+	assertEqualInt(1,
+	    archive_pathmatch("a/b/c/d", "a/b/c/d", PATHMATCH_NO_ANCHOR_START));
+	assertEqualInt(0,
 	    archive_pathmatch("b/c", "a/b/c/d", PATHMATCH_NO_ANCHOR_START));
 	assertEqualInt(0,
 	    archive_pathmatch("^b/c", "a/b/c/d", PATHMATCH_NO_ANCHOR_START));
+
+
+	assertEqualInt(1,
+	    archive_pathmatch("b/c/d", "a/b/c/d", PATHMATCH_NO_ANCHOR_START));
+	assertEqualInt(1,
+	    archive_pathmatch("b/c/d", "/a/b/c/d", PATHMATCH_NO_ANCHOR_START));
+
 
 	/* Matches not anchored at end. */
 	assertEqualInt(0,
@@ -241,4 +259,30 @@ DEFINE_TEST(test_archive_pathmatch)
 	    archive_pathmatch("a/b/c/$", "a/b/c", PATHMATCH_NO_ANCHOR_END));
 	assertEqualInt(0,
 	    archive_pathmatch("b/c", "a/b/c/d", PATHMATCH_NO_ANCHOR_END));
+
+	/* Matches not anchored at either end. */
+	assertEqualInt(1,
+	    archive_pathmatch("b/c", "a/b/c/d", PATHMATCH_NO_ANCHOR_START | PATHMATCH_NO_ANCHOR_END));
+	assertEqualInt(0,
+	    archive_pathmatch("/b/c", "a/b/c/d", PATHMATCH_NO_ANCHOR_START | PATHMATCH_NO_ANCHOR_END));
+	assertEqualInt(0,
+	    archive_pathmatch("/a/b/c", "a/b/c/d", PATHMATCH_NO_ANCHOR_START | PATHMATCH_NO_ANCHOR_END));
+	assertEqualInt(1,
+	    archive_pathmatch("/a/b/c", "/a/b/c/d", PATHMATCH_NO_ANCHOR_START | PATHMATCH_NO_ANCHOR_END));
+	assertEqualInt(0,
+	    archive_pathmatch("/a/b/c$", "a/b/c/d", PATHMATCH_NO_ANCHOR_START | PATHMATCH_NO_ANCHOR_END));
+	assertEqualInt(0,
+	    archive_pathmatch("/a/b/c/d$", "a/b/c/d", PATHMATCH_NO_ANCHOR_START | PATHMATCH_NO_ANCHOR_END));
+	assertEqualInt(0,
+	    archive_pathmatch("/a/b/c/d$", "/a/b/c/d/e", PATHMATCH_NO_ANCHOR_START | PATHMATCH_NO_ANCHOR_END));
+	assertEqualInt(1,
+	    archive_pathmatch("/a/b/c/d$", "/a/b/c/d", PATHMATCH_NO_ANCHOR_START | PATHMATCH_NO_ANCHOR_END));
+	assertEqualInt(1,
+	    archive_pathmatch("^a/b/c", "a/b/c/d", PATHMATCH_NO_ANCHOR_START | PATHMATCH_NO_ANCHOR_END));
+	assertEqualInt(0,
+	    archive_pathmatch("^a/b/c$", "a/b/c/d", PATHMATCH_NO_ANCHOR_START | PATHMATCH_NO_ANCHOR_END));
+	assertEqualInt(0,
+	    archive_pathmatch("a/b/c$", "a/b/c/d", PATHMATCH_NO_ANCHOR_START | PATHMATCH_NO_ANCHOR_END));
+	assertEqualInt(1,
+	    archive_pathmatch("b/c/d$", "a/b/c/d", PATHMATCH_NO_ANCHOR_START | PATHMATCH_NO_ANCHOR_END));
 }

@@ -1,29 +1,10 @@
 /*-
+ * SPDX-License-Identifier: BSD-2-Clause
+ *
  * Copyright (c) 2003-2008 Tim Kientzle
  * All rights reserved.
- *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions
- * are met:
- * 1. Redistributions of source code must retain the above copyright
- *    notice, this list of conditions and the following disclaimer.
- * 2. Redistributions in binary form must reproduce the above copyright
- *    notice, this list of conditions and the following disclaimer in the
- *    documentation and/or other materials provided with the distribution.
- *
- * THIS SOFTWARE IS PROVIDED BY THE AUTHOR(S) ``AS IS'' AND ANY EXPRESS OR
- * IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES
- * OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED.
- * IN NO EVENT SHALL THE AUTHOR(S) BE LIABLE FOR ANY DIRECT, INDIRECT,
- * INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT
- * NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
- * DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
- * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
- * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF
- * THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 #include "test.h"
-__FBSDID("$FreeBSD: src/usr.bin/tar/test/test_option_T.c,v 1.3 2008/08/15 06:12:02 kientzle Exp $");
 
 DEFINE_TEST(test_option_s)
 {
@@ -36,7 +17,7 @@ DEFINE_TEST(test_option_s)
 	assertMakeFile("in/d1/bar", 0644, "bar");
 	if (canSymlink()) {
 		assertMakeFile("in/d1/realfile", 0644, "realfile");
-		assertMakeSymlink("in/d1/symlink", "realfile");
+		assertMakeSymlink("in/d1/symlink", "realfile", 0);
 	}
 	assertMakeFile("in/d1/hardlink1", 0644, "hardlinkedfile");
 	assertMakeHardlink("in/d1/hardlink2", "in/d1/hardlink1");
@@ -82,20 +63,41 @@ DEFINE_TEST(test_option_s)
 	 */
 	assertMakeDir("test4", 0755);
 	systemf("%s -cf test4.tar in/d1/foo in/d1/bar",
-	    testprog, testprog);
+	    testprog);
 	systemf("%s -xf test4.tar -s /foo/bar/ -s }bar}baz} -C test4",
-	    testprog, testprog);
+	    testprog);
 	assertFileContents("foo", 3, "test4/in/d1/bar");
 	assertFileContents("bar", 3, "test4/in/d1/baz");
+
+	/*
+	 * Test 4b: Multiple substitutions behavior with option b.
+	 */
+	assertMakeDir("test4b", 0755);
+	systemf("%s -cf test4b.tar in/d1/foo in/d1/bar",
+	    testprog);
+	systemf("%s -xf test4b.tar -s /oo/ar/ -s }ar}az}b -C test4b",
+	    testprog);
+	assertFileContents("foo", 3, "test4b/in/d1/faz");
+	assertFileContents("bar", 3, "test4b/in/d1/baz");
+
+	/*
+	 * Test 4bb: Multiple substitutions with option b
+	 * (libarchive/libarchive#2414 GitHub issue regression test).
+	 */
+	assertMakeDir("test4bb", 0755);
+	systemf("%s -cf test4bb.tar in/d1/foo in/d1/bar",
+	    testprog);
+	systemf("%s -xf test4bb.tar -s /oo/ar/ -s }ar}az}b -s :az:end:b -C test4bb",
+	    testprog);
+	assertFileContents("foo", 3, "test4bb/in/d1/fend");
+	assertFileContents("bar", 3, "test4bb/in/d1/bend");
 
 	/*
 	 * Test 5: Name-switching substitutions when extracting archive.
 	 */
 	assertMakeDir("test5", 0755);
-	systemf("%s -cf test5.tar in/d1/foo in/d1/bar",
-	    testprog, testprog);
-	systemf("%s -xf test5.tar -s /foo/bar/ -s }bar}foo} -C test5",
-	    testprog, testprog);
+	systemf("%s -cf test5.tar in/d1/foo in/d1/bar", testprog);
+	systemf("%s -xf test5.tar -s /foo/bar/ -s }bar}foo} -C test5", testprog);
 	assertFileContents("foo", 3, "test5/in/d1/bar");
 	assertFileContents("bar", 3, "test5/in/d1/foo");
 
@@ -109,14 +111,14 @@ DEFINE_TEST(test_option_s)
 		    testprog, testprog);
 		assertFileContents("realfile", 8, "test6a/in/d2/realfile");
 		assertFileContents("realfile", 8, "test6a/in/d2/symlink");
-		assertIsSymlink("test6a/in/d2/symlink", "realfile");
+		assertIsSymlink("test6a/in/d2/symlink", "realfile", 0);
 		/* At creation time. */
 		assertMakeDir("test6b", 0755);
 		systemf("%s -cf - -s /d1/d2/ in/d1 | %s -xf - -C test6b",
 		    testprog, testprog);
 		assertFileContents("realfile", 8, "test6b/in/d2/realfile");
 		assertFileContents("realfile", 8, "test6b/in/d2/symlink");
-		assertIsSymlink("test6b/in/d2/symlink", "realfile");
+		assertIsSymlink("test6b/in/d2/symlink", "realfile", 0);
 	}
 
 	/*
@@ -129,14 +131,14 @@ DEFINE_TEST(test_option_s)
 		    testprog, testprog);
 		assertFileContents("realfile", 8, "test7a/in/d1/realfile-renamed");
 		assertFileContents("realfile", 8, "test7a/in/d1/symlink");
-		assertIsSymlink("test7a/in/d1/symlink", "realfile-renamed");
+		assertIsSymlink("test7a/in/d1/symlink", "realfile-renamed", 0);
 		/* At creation. */
 		assertMakeDir("test7b", 0755);
 		systemf("%s -cf - -s /realfile/realfile-renamed/ in/d1 | %s -xf - -C test7b",
 		    testprog, testprog);
 		assertFileContents("realfile", 8, "test7b/in/d1/realfile-renamed");
 		assertFileContents("realfile", 8, "test7b/in/d1/symlink");
-		assertIsSymlink("test7b/in/d1/symlink", "realfile-renamed");
+		assertIsSymlink("test7b/in/d1/symlink", "realfile-renamed", 0);
 	}
 
 	/*
@@ -192,7 +194,7 @@ DEFINE_TEST(test_option_s)
 		assertFileContents("realfile", 8, "test10a/in/d1/foo");
 		assertFileContents("foo", 3, "test10a/in/d1/realfile");
 		assertFileContents("foo", 3, "test10a/in/d1/symlink");
-		assertIsSymlink("test10a/in/d1/symlink", "realfile");
+		assertIsSymlink("test10a/in/d1/symlink", "realfile", 0);
 		/* At creation. */
 		assertMakeDir("test10b", 0755);
 		systemf("%s -cf - -s /realfile/foo/S -s /foo/realfile/ in/d1 | %s -xf - -C test10b",
@@ -200,7 +202,7 @@ DEFINE_TEST(test_option_s)
 		assertFileContents("realfile", 8, "test10b/in/d1/foo");
 		assertFileContents("foo", 3, "test10b/in/d1/realfile");
 		assertFileContents("foo", 3, "test10b/in/d1/symlink");
-		assertIsSymlink("test10b/in/d1/symlink", "realfile");
+		assertIsSymlink("test10b/in/d1/symlink", "realfile", 0);
 	}
 
 	/*
@@ -214,7 +216,7 @@ DEFINE_TEST(test_option_s)
 		assertFileContents("foo", 3, "test11a/in/d1/foo");
 		assertFileContents("realfile", 8, "test11a/in/d1/realfile");
 		assertFileContents("foo", 3, "test11a/in/d1/symlink");
-		assertIsSymlink("test11a/in/d1/symlink", "foo");
+		assertIsSymlink("test11a/in/d1/symlink", "foo", 0);
 		/* At creation. */
 		assertMakeDir("test11b", 0755);
 		systemf("%s -cf - -s /realfile/foo/R in/d1 | %s -xf - -C test11b",
@@ -222,7 +224,7 @@ DEFINE_TEST(test_option_s)
 		assertFileContents("foo", 3, "test11b/in/d1/foo");
 		assertFileContents("realfile", 8, "test11b/in/d1/realfile");
 		assertFileContents("foo", 3, "test11b/in/d1/symlink");
-		assertIsSymlink("test11b/in/d1/symlink", "foo");
+		assertIsSymlink("test11b/in/d1/symlink", "foo", 0);
 	}
 
 	/*
@@ -258,4 +260,23 @@ DEFINE_TEST(test_option_s)
 	assertFileContents("foo", 3, "test13a/in/d1/hardlink2");
 	assertIsHardlink("test13a/in/d1/foo", "test13a/in/d1/hardlink2");
 	/* TODO: See above; expand this test to verify renames at creation. */
+
+	/*
+	 * Test 14: Global substitutions when extracting archive.
+	 */
+    /* Global substitution. */
+	assertMakeDir("test14", 0755);
+	systemf("%s -cf test14.tar in/d1/foo in/d1/bar",
+	    testprog);
+	systemf("%s -xf test14.tar -s /o/z/g -s /bar/baz/ -C test14",
+	    testprog);
+	assertFileContents("foo", 3, "test14/in/d1/fzz");
+	assertFileContents("bar", 3, "test14/in/d1/baz");
+    /* Singular substitution. */
+	systemf("%s -cf test14.tar in/d1/foo in/d1/bar",
+	    testprog);
+	systemf("%s -xf test14.tar -s /o/z/ -s /bar/baz/ -C test14",
+	    testprog);
+	assertFileContents("foo", 3, "test14/in/d1/fzo");
+	assertFileContents("bar", 3, "test14/in/d1/baz");
 }

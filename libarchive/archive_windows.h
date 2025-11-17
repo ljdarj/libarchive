@@ -23,13 +23,7 @@
  * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF
  * THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- *
- * $FreeBSD$
  */
-
-#ifndef __LIBARCHIVE_BUILD
-#error This header is only to be used internally to libarchive.
-#endif
 
 /*
  * TODO: A lot of stuff in here isn't actually used by libarchive and
@@ -47,6 +41,10 @@
 
 #ifndef LIBARCHIVE_ARCHIVE_WINDOWS_H_INCLUDED
 #define	LIBARCHIVE_ARCHIVE_WINDOWS_H_INCLUDED
+
+#ifndef __LIBARCHIVE_BUILD
+#error This header is only to be used internally to libarchive.
+#endif
 
 /* Start of configuration for native Win32  */
 #ifndef MINGW_HAS_SECURE_API
@@ -73,6 +71,8 @@
 #define NOCRYPT
 #include <windows.h>
 //#define	EFTYPE 7
+
+#include "archive_platform_stat.h"
 
 #if defined(__BORLANDC__)
 #pragma warn -8068	/* Constant out of range in comparison. */
@@ -108,14 +108,12 @@
 #endif
 #define	lstat		__la_stat
 #define	open		__la_open
+#define	_wopen		__la_wopen
 #define	read		__la_read
 #if !defined(__BORLANDC__) && !defined(__WATCOMC__)
 #define setmode		_setmode
 #endif
-#ifdef stat
-#undef stat
-#endif
-#define	stat(path,stref)		__la_stat(path,stref)
+#define	la_stat(path,stref)		__la_stat(path,stref)
 #if !defined(__WATCOMC__)
 #if !defined(__BORLANDC__)
 #define	strdup		_strdup
@@ -218,14 +216,20 @@
 #define	S_IWUSR	     _S_IWUSR
 #define	S_IRUSR	     _S_IRUSR
 #endif
+#ifndef S_IRWXG
 #define	S_IRWXG        _S_IRWXG
 #define	S_IXGRP        _S_IXGRP
 #define	S_IWGRP        _S_IWGRP
+#endif
+#ifndef S_IRGRP
 #define	S_IRGRP        _S_IRGRP
+#endif
+#ifndef S_IRWXO
 #define	S_IRWXO        _S_IRWXO
 #define	S_IXOTH        _S_IXOTH
 #define	S_IWOTH        _S_IWOTH
 #define	S_IROTH        _S_IROTH
+#endif
 
 #endif
 
@@ -260,6 +264,9 @@
     #define	F_OK    0       /*  Test for existence of file  */
 #endif
 
+/* Functions to circumvent off_t limitations */
+int __la_seek_fstat(int fd, la_seek_stat_t *st);
+int __la_seek_stat(const char *path, la_seek_stat_t *st);
 
 /* Replacement POSIX function */
 extern int	 __la_fstat(int fd, struct stat *st);
@@ -268,6 +275,7 @@ extern int	 __la_lstat(const char *path, struct stat *st);
 extern __int64	 __la_lseek(int fd, __int64 offset, int whence);
 #endif
 extern int	 __la_open(const char *path, int flags, ...);
+extern int	 __la_wopen(const wchar_t *path, int flags, ...);
 extern ssize_t	 __la_read(int fd, void *buf, size_t nbytes);
 extern int	 __la_stat(const char *path, struct stat *st);
 extern pid_t	 __la_waitpid(HANDLE child, int *status, int option);
@@ -291,12 +299,17 @@ typedef int mbstate_t;
 size_t wcrtomb(char *, wchar_t, mbstate_t *);
 #endif
 
-#if defined(_MSC_VER) && _MSC_VER < 1300
+#if !WINAPI_FAMILY_PARTITION (WINAPI_PARTITION_DESKTOP) && NTDDI_VERSION < NTDDI_WIN10_VB
+// not supported in UWP SDK before 20H1
+#define GetVolumePathNameW(f, v, c)   (0)
+#elif defined(_MSC_VER) && _MSC_VER < 1300
 WINBASEAPI BOOL WINAPI GetVolumePathNameW(
        LPCWSTR lpszFileName,
        LPWSTR lpszVolumePathName,
        DWORD cchBufferLength
        );
+#endif
+#if defined(_MSC_VER) && _MSC_VER < 1300
 # if _WIN32_WINNT < 0x0500 /* windows.h not providing 0x500 API */
 typedef struct _FILE_ALLOCATED_RANGE_BUFFER {
        LARGE_INTEGER FileOffset;
@@ -309,4 +322,4 @@ typedef struct _FILE_ALLOCATED_RANGE_BUFFER {
 # endif
 #endif
 
-#endif /* LIBARCHIVE_ARCHIVE_WINDOWS_H_INCLUDED */
+#endif /* !LIBARCHIVE_ARCHIVE_WINDOWS_H_INCLUDED */

@@ -1,3 +1,6 @@
+#
+# SPDX-License-Identifier: BSD-2-Clause
+#
 ############################################
 #
 # How to build bsdcat
@@ -8,8 +11,10 @@ IF(ENABLE_CAT)
   SET(bsdcat_SOURCES
     bsdcat.c
     bsdcat.h
-    ../libarchive_fe/err.c
-    ../libarchive_fe/err.h
+    bsdcat_platform.h
+    cmdline.c
+    ../libarchive_fe/lafe_err.c
+    ../libarchive_fe/lafe_err.h
     ../libarchive_fe/lafe_platform.h
   )
   INCLUDE_DIRECTORIES(${CMAKE_CURRENT_SOURCE_DIR}/../libarchive_fe)
@@ -26,11 +31,12 @@ IF(ENABLE_CAT)
     SET_TARGET_PROPERTIES(bsdcat PROPERTIES COMPILE_DEFINITIONS
     				 LIBARCHIVE_STATIC)
   ENDIF(ENABLE_CAT_SHARED)
-  GET_TARGET_PROPERTY(BSDCAT bsdcat LOCATION)
 
   # Installation rules
-  INSTALL(TARGETS bsdcat RUNTIME DESTINATION bin)
-  INSTALL_MAN(${bsdcat_MANS})
+  IF(ENABLE_INSTALL)
+    INSTALL(TARGETS bsdcat RUNTIME DESTINATION bin)
+    INSTALL_MAN(${bsdcat_MANS})
+  ENDIF(ENABLE_INSTALL)
 ENDIF(ENABLE_CAT)
 
 add_subdirectory(test)

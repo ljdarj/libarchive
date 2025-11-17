@@ -26,7 +26,6 @@
  */
 
 #include "archive_platform.h"
-__FBSDID("$FreeBSD$");
 
 #ifdef HAVE_ERRNO_H
 #include <errno.h>
@@ -46,7 +45,9 @@ __FBSDID("$FreeBSD$");
 #include "archive_entry.h"
 #include "archive_entry_locale.h"
 #include "archive_private.h"
+#include "archive_random_private.h"
 #include "archive_write_private.h"
+#include "archive_write_set_format_private.h"
 
 struct warc_s {
 	unsigned int omit_warcinfo:1;
@@ -55,7 +56,7 @@ struct warc_s {
 	mode_t typ;
 	unsigned int rng;
 	/* populated size */
-	size_t populz;
+	uint64_t populz;
 };
 
 static const char warcinfo[] =
@@ -78,7 +79,7 @@ typedef enum {
 	WT_RVIS,
 	/* conversion, unsupported */
 	WT_CONV,
-	/* continutation, unsupported at the moment */
+	/* continuation, unsupported at the moment */
 	WT_CONT,
 	/* invalid type */
 	LAST_WT
@@ -91,7 +92,7 @@ typedef struct {
 	time_t rtime;
 	time_t mtime;
 	const char *cnttyp;
-	size_t cntlen;
+	uint64_t cntlen;
 } warc_essential_hdr_t;
 
 typedef struct {
@@ -106,8 +107,8 @@ static int _warc_close(struct archive_write *a);
 static int _warc_free(struct archive_write *a);
 
 /* private routines */
-static ssize_t _popul_ehdr(char *t, size_t z, warc_essential_hdr_t);
-static int _gen_uuid(warc_uuid_t tgt[static 1U]);
+static ssize_t _popul_ehdr(struct archive_string *t, size_t z, warc_essential_hdr_t);
+static int _gen_uuid(warc_uuid_t *tgt);
 
 
 /*
@@ -141,7 +142,6 @@ archive_write_set_format_warc(struct archive *_a)
 	w->typ = 0;
 	/* also initialise our rng */
 	w->rng = (unsigned int)w->now;
-	srand(w->rng);
 
 	a->format_data = w;
 	a->format_name = "WARC/1.0";
@@ -181,39 +181,40 @@ static int
 _warc_header(struct archive_write *a, struct archive_entry *entry)
 {
 	struct warc_s *w = a->format_data;
-	char hdr[512U];
+	struct archive_string hdr;
+#define MAX_HDR_SIZE 512
 
 	/* check whether warcinfo record needs outputting */
 	if (!w->omit_warcinfo) {
+		ssize_t r;
 		warc_essential_hdr_t wi = {
 			WT_INFO,
 			/*uri*/NULL,
 			/*urn*/NULL,
-			/*rtm*/w->now,
-			/*mtm*/w->now,
+			/*rtm*/0,
+			/*mtm*/0,
 			/*cty*/"application/warc-fields",
 			/*len*/sizeof(warcinfo) - 1U,
 		};
-		ssize_t r;
+		wi.rtime = w->now;
+		wi.mtime = w->now;
 
-		r = _popul_ehdr(hdr, sizeof(hdr), wi);
+		archive_string_init(&hdr);
+		r = _popul_ehdr(&hdr, MAX_HDR_SIZE, wi);
 		if (r >= 0) {
 			/* jackpot! */
 			/* now also use HDR buffer for the actual warcinfo */
-			memcpy(hdr + r, warcinfo, sizeof(warcinfo));
-			r += sizeof(warcinfo) - 1U;
+			archive_strncat(&hdr, warcinfo, sizeof(warcinfo) -1);
 
 			/* append end-of-record indicator */
-			hdr[r++] = '\r';
-			hdr[r++] = '\n';
-			hdr[r++] = '\r';
-			hdr[r++] = '\n';
+			archive_strncat(&hdr, "\r\n\r\n", 4);
 
 			/* write to output stream */
-			__archive_write_output(a, hdr, r);
+			__archive_write_output(a, hdr.s, archive_strlen(&hdr));
 		}
 		/* indicate we're done with file header writing */
 		w->omit_warcinfo = 1U;
+		archive_string_free(&hdr);
 	}
 
 	if (archive_entry_pathname(entry) == NULL) {
@@ -227,16 +228,21 @@ _warc_header(struct archive_write *a, struct archive_entry *entry)
 	if (w->typ == AE_IFREG) {
 		warc_essential_hdr_t rh = {
 			WT_RSRC,
-			/*uri*/archive_entry_pathname(entry),
+			/*uri*/NULL,
 			/*urn*/NULL,
-			/*rtm*/w->now,
-			/*mtm*/archive_entry_mtime(entry),
+			/*rtm*/0,
+			/*mtm*/0,
 			/*cty*/NULL,
-			/*len*/archive_entry_size(entry),
+			/*len*/0,
 		};
 		ssize_t r;
+		rh.tgturi = archive_entry_pathname(entry);
+		rh.rtime = w->now;
+		rh.mtime = archive_entry_mtime(entry);
+		rh.cntlen = (size_t)archive_entry_size(entry);
 
-		r = _popul_ehdr(hdr, sizeof(hdr), rh);
+		archive_string_init(&hdr);
+		r = _popul_ehdr(&hdr, MAX_HDR_SIZE, rh);
 		if (r < 0) {
 			/* don't bother */
 			archive_set_error(
@@ -246,16 +252,15 @@ _warc_header(struct archive_write *a, struct archive_entry *entry)
 			return (ARCHIVE_WARN);
 		}
 		/* otherwise append to output stream */
-		__archive_write_output(a, hdr, r);
+		__archive_write_output(a, hdr.s, r);
 		/* and let subsequent calls to _data() know about the size */
 		w->populz = rh.cntlen;
+		archive_string_free(&hdr);
 		return (ARCHIVE_OK);
 	}
 	/* just resort to erroring as per Tim's advice */
-	archive_set_error(
-		&a->archive,
-		ARCHIVE_ERRNO_FILE_FORMAT,
-		"WARC can only process regular files");
+	__archive_write_entry_filetype_unsupported(
+	    &a->archive, entry, "WARC");
 	return (ARCHIVE_FAILED);
 }
 
@@ -269,7 +274,7 @@ _warc_data(struct archive_write *a, const void *buf, size_t len)
 
 		/* never write more bytes than announced */
 		if (len > w->populz) {
-			len = w->populz;
+			len = (size_t)w->populz;
 		}
 
 		/* now then, out we put the whole shebang */
@@ -318,48 +323,48 @@ _warc_free(struct archive_write *a)
 
 
 /* private routines */
-#define XNPRINTF(x, z, args...)			\
-	do {					\
-		int __r = snprintf(x, z, args);	\
-		if (__r < 0) {			\
-			return -1;		\
-		}				\
-		x += __r;			\
-	} while (0)
-
-static size_t
-xstrftime(char *s, size_t max, const char *fmt, time_t t)
+static void
+xstrftime(struct archive_string *as, const char *fmt, time_t t)
 {
 /** like strftime(3) but for time_t objects */
 	struct tm *rt;
+#if defined(HAVE_GMTIME_R) || defined(HAVE_GMTIME_S)
+	struct tm timeHere;
+#endif
+	char strtime[100];
+	size_t len;
 
-	if ((rt = gmtime(&t)) == NULL) {
-		return 0U;
-	}
+#if defined(HAVE_GMTIME_S)
+	rt = gmtime_s(&timeHere, &t) ? NULL : &timeHere;
+#elif defined(HAVE_GMTIME_R)
+	rt = gmtime_r(&t, &timeHere);
+#else
+	rt = gmtime(&t);
+#endif
+	if (!rt)
+		return;
 	/* leave the hard yacker to our role model strftime() */
-	return strftime(s, max, fmt, rt);
+	len = strftime(strtime, sizeof(strtime)-1, fmt, rt);
+	archive_strncat(as, strtime, len);
 }
 
 static ssize_t
-_popul_ehdr(char *tgt, size_t tsz, warc_essential_hdr_t hdr)
+_popul_ehdr(struct archive_string *tgt, size_t tsz, warc_essential_hdr_t hdr)
 {
 	static const char _ver[] = "WARC/1.0\r\n";
-	static const char *_typ[LAST_WT] = {
+	static const char * const _typ[LAST_WT] = {
 		NULL, "warcinfo", "metadata", "resource", NULL
 	};
 	char std_uuid[48U];
-	char *tp = tgt;
-	const char *const ep = tgt + tsz;
 
 	if (hdr.type == WT_NONE || hdr.type > WT_RSRC) {
 		/* brilliant, how exactly did we get here? */
 		return -1;
 	}
 
-	memcpy(tp, _ver, sizeof(_ver) - 1U);
-	tp += sizeof(_ver) - 1U;
+	archive_strcpy(tgt, _ver);
 
-	XNPRINTF(tp, ep - tp, "WARC-Type: %s\r\n", _typ[hdr.type]);
+	archive_string_sprintf(tgt, "WARC-Type: %s\r\n", _typ[hdr.type]);
 
 	if (hdr.tgturi != NULL) {
 		/* check if there's a xyz:// */
@@ -375,25 +380,29 @@ _popul_ehdr(char *tgt, size_t tsz, warc_essential_hdr_t hdr)
 			/* hm, best to prepend file:// then */
 			u = _fil;
 		}
-		XNPRINTF(
-			tp, ep - tp,
+		archive_string_sprintf(tgt,
 			"WARC-Target-URI: %s%s\r\n", u, hdr.tgturi);
 	}
 
 	/* record time is usually when the http is sent off,
 	 * just treat the archive writing as such for a moment */
-	tp += xstrftime(tp, ep - tp,
-		"WARC-Date: %FT%H:%M:%SZ\r\n", hdr.rtime);
+	xstrftime(tgt, "WARC-Date: %Y-%m-%dT%H:%M:%SZ\r\n", hdr.rtime);
 
 	/* while we're at it, record the mtime */
-	tp += xstrftime(tp, ep - tp,
-		"Last-Modified: %FT%H:%M:%SZ\r\n", hdr.mtime);
+	xstrftime(tgt, "Last-Modified: %Y-%m-%dT%H:%M:%SZ\r\n", hdr.mtime);
 
 	if (hdr.recid == NULL) {
 		/* generate one, grrrr */
 		warc_uuid_t u;
 
 		_gen_uuid(&u);
+		/* Unfortunately, archive_string_sprintf does not
+		 * handle the minimum number following '%'.
+		 * So we have to use snprintf function here instead
+		 * of archive_string_snprintf function. */
+#if defined(_WIN32) && !defined(__CYGWIN__) && !( defined(_MSC_VER) && _MSC_VER >= 1900)
+#define snprintf _snprintf
+#endif
 		snprintf(
 			std_uuid, sizeof(std_uuid),
 			"<urn:uuid:%08x-%04x-%04x-%04x-%04x%08x>",
@@ -405,32 +414,24 @@ _popul_ehdr(char *tgt, size_t tsz, warc_essential_hdr_t hdr)
 	}
 
 	/* record-id is mandatory, fingers crossed we won't fail */
-	XNPRINTF(tp, ep - tp, "WARC-Record-ID: %s\r\n", hdr.recid);
+	archive_string_sprintf(tgt, "WARC-Record-ID: %s\r\n", hdr.recid);
 
 	if (hdr.cnttyp != NULL) {
-		XNPRINTF(tp, ep - tp, "Content-Type: %s\r\n", hdr.cnttyp);
+		archive_string_sprintf(tgt, "Content-Type: %s\r\n", hdr.cnttyp);
 	}
 
 	/* next one is mandatory */
-	XNPRINTF(tp, ep - tp, "Content-Length: %zu\r\n", hdr.cntlen);
+	archive_string_sprintf(tgt, "Content-Length: %ju\r\n", (uintmax_t)hdr.cntlen);
+	/**/
+	archive_strncat(tgt, "\r\n", 2);
 
-	if (tp + 2U >= ep) {
-		/* doesn't fit */
-		return -1;
-	}
-
-	*tp++ = '\r';
-	*tp++ = '\n';
-	return tp - tgt;
+	return (archive_strlen(tgt) >= tsz)? -1: (ssize_t)archive_strlen(tgt);
 }
 
 static int
-_gen_uuid(warc_uuid_t tgt[static 1U])
+_gen_uuid(warc_uuid_t *tgt)
 {
-	tgt->u[0U] = (unsigned int)rand();
-	tgt->u[1U] = (unsigned int)rand();
-	tgt->u[2U] = (unsigned int)rand();
-	tgt->u[3U] = (unsigned int)rand();
+	archive_random(tgt->u, sizeof(tgt->u));
 	/* obey uuid version 4 rules */
 	tgt->u[1U] &= 0xffff0fffU;
 	tgt->u[1U] |= 0x4000U;

@@ -23,7 +23,6 @@
  * THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 #include "test.h"
-__FBSDID("$FreeBSD$");
 
 #define __LIBARCHIVE_TEST
 #include "archive_string.h"
@@ -67,6 +66,8 @@ test_archive_string_ensure(void)
 
 	assert(&s == archive_string_ensure(&s, EXTENT + 1));
 	assertNonNULLString(0, 2 * EXTENT, s);
+
+	archive_string_free(&s);
 }
 
 static void
@@ -92,6 +93,8 @@ test_archive_strcat(void)
 	/* non-empty target, non-empty source */
 	assert(&s == archive_strcat(&s, "baz"));
 	assertExactString(8, EXTENT, "fubarbaz", s);
+
+	archive_string_free(&s);
 }
 
 static void
@@ -109,6 +112,8 @@ test_archive_strappend_char(void)
 	/* non-empty target */
 	archive_strappend_char(&s, 'Y');
 	assertExactString(2, EXTENT, "XY", s);
+
+	archive_string_free(&s);
 }
 
 /* archive_strnXXX() tests focus on length handling.
@@ -134,6 +139,8 @@ test_archive_strncat(void)
 	/* long read is ok too! */
 	assert(&s == archive_strncat(&s, "snafu", 8));
 	assertExactString(13, EXTENT, "snafubarsnafu", s);
+
+	archive_string_free(&s);
 }
 
 static void
@@ -155,6 +162,8 @@ test_archive_strncpy(void)
 	/* long read is ok too! */
 	assert(&s == archive_strncpy(&s, "snafu", 8));
 	assertExactString(5, EXTENT, "snafu", s);
+
+	archive_string_free(&s);
 }
 
 static void
@@ -176,6 +185,8 @@ test_archive_strcpy(void)
 	/* dirty target, empty source */
 	assert(&s == archive_strcpy(&s, ""));
 	assertExactString(0, EXTENT, "", s);
+
+	archive_string_free(&s);
 }
 
 static void
@@ -222,6 +233,11 @@ test_archive_string_concat(void)
 	archive_string_concat(&t, &s);
 	assertExactString(5, EXTENT, "snafu", s);
 	assertExactString(5, EXTENT, "snafu", t);
+
+	archive_string_free(&v);
+	archive_string_free(&u);
+	archive_string_free(&t);
+	archive_string_free(&s);
 }
 
 static void
@@ -274,6 +290,11 @@ test_archive_string_copy(void)
 	archive_string_copy(&t, &s);
 	assertExactString(5, EXTENT, "fubar", s);
 	assertExactString(5, EXTENT, "fubar", t);
+
+	archive_string_free(&v);
+	archive_string_free(&u);
+	archive_string_free(&t);
+	archive_string_free(&s);
 }
 
 static void
@@ -328,6 +349,45 @@ test_archive_string_sprintf(void)
 	archive_string_empty(&s);
 	archive_string_sprintf(&s, "%d", 1234567890);
 	assertExactString(10, 8 * EXTENT, "1234567890", s);
+
+	archive_string_free(&s);
+}
+
+static void
+test_archive_string_dirname(void)
+{
+	static struct pair { const char *str, *exp; } pairs[] = {
+		{ "",		"." },
+		{ "/",		"/" },
+		{ "//",		"/" },
+		{ "///",	"/" },
+		{ "./",		"." },
+		{ ".",		"." },
+		{ "..",		"." },
+		{ "foo",	"." },
+		{ "foo/",	"." },
+		{ "foo//",	"." },
+		{ "foo/bar",	"foo" },
+		{ "foo/bar/",	"foo" },
+		{ "foo/bar//",	"foo" },
+		{ "foo//bar",	"foo" },
+		{ "foo//bar/",	"foo" },
+		{ "foo//bar//",	"foo" },
+		{ "/foo",	"/" },
+		{ "//foo",	"/" },
+		{ "//foo/",	"/" },
+		{ "//foo//",	"/" },
+		{ 0 },
+	};
+	struct pair *pair;
+	struct archive_string s;
+
+	archive_string_init(&s);
+	for (pair = pairs; pair->str; pair++) {
+		archive_strcpy(&s, pair->str);
+		archive_string_dirname(&s);
+		assertEqualString(pair->exp, s.s);
+	}
 }
 
 DEFINE_TEST(test_archive_string)
@@ -341,6 +401,7 @@ DEFINE_TEST(test_archive_string)
 	test_archive_string_concat();
 	test_archive_string_copy();
 	test_archive_string_sprintf();
+	test_archive_string_dirname();
 }
 
 static const char *strings[] =
@@ -380,9 +441,9 @@ DEFINE_TEST(test_archive_string_sort)
   unsigned int i, j, size;
   char **test_strings, *tmp;
 
-  srand(time(NULL));
+  srand((unsigned int)time(NULL));
   size = sizeof(strings) / sizeof(char *);
-  assert((test_strings = (char **)calloc(1, sizeof(strings))) != NULL);
+  assert((test_strings = calloc(size, sizeof(char *))) != NULL);
   for (i = 0; i < (size - 1); i++)
     assert((test_strings[i] = strdup(strings[i])) != NULL);
 

@@ -24,11 +24,10 @@
  * THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 #include "test.h"
-__FBSDID("$FreeBSD$");
 
 DEFINE_TEST(test_read_format_zip_traditional_encryption_data)
 {
-	/* This file is password protected (Traditional PKWARE Enctypted).
+	/* This file is password protected (Traditional PKWARE Encrypted).
 	   The headers are NOT encrypted. Password is "12345678". */
 	const char *refname =
 		"test_read_format_zip_traditional_encryption_data.zip";
@@ -36,13 +35,13 @@ DEFINE_TEST(test_read_format_zip_traditional_encryption_data)
 	struct archive *a;
 	char buff[512];
 
-	/* Check if running system has cryptographic functionarity. */
+	/* Check if running system has cryptographic functionality. */
 	assert((a = archive_write_new()) != NULL);
 	assertEqualIntA(a, ARCHIVE_OK, archive_write_set_format_zip(a));
 	assertEqualIntA(a, ARCHIVE_OK, archive_write_add_filter_none(a));
 	if (ARCHIVE_OK != archive_write_set_options(a,
 				"zip:encryption=traditional")) {
-		skipping("This system does not have cryptographic liberary");
+		skipping("This system does not have cryptographic library");
 		archive_write_free(a);
 		return;
 	}
@@ -124,7 +123,15 @@ DEFINE_TEST(test_read_format_zip_traditional_encryption_data)
 	assertEqualInt(1, archive_entry_is_data_encrypted(ae));
 	assertEqualInt(0, archive_entry_is_metadata_encrypted(ae));
 	assertEqualIntA(a, 1, archive_read_has_encrypted_entries(a));
-	assertEqualInt(495, archive_read_data(a, buff, sizeof(buff)));
+	if (archive_zlib_version() != NULL) {
+		assertEqualInt(495, archive_read_data(a, buff, sizeof(buff)));
+	} else {
+		assertEqualInt(ARCHIVE_FAILED,
+		    archive_read_data(a, buff, sizeof(buff)));
+		assertEqualString(archive_error_string(a),
+		    "Unsupported ZIP compression method (8: deflation)");
+		assert(archive_errno(a) != 0);
+	}
 	
 	/* Verify encrypted file "foo.txt" */
 	assertEqualIntA(a, ARCHIVE_OK, archive_read_next_header(a, &ae));
@@ -134,7 +141,15 @@ DEFINE_TEST(test_read_format_zip_traditional_encryption_data)
 	assertEqualInt(1, archive_entry_is_data_encrypted(ae));
 	assertEqualInt(0, archive_entry_is_metadata_encrypted(ae));
 	assertEqualIntA(a, 1, archive_read_has_encrypted_entries(a));
-	assertEqualInt(495, archive_read_data(a, buff, sizeof(buff)));
+	if (archive_zlib_version() != NULL) {
+		assertEqualInt(495, archive_read_data(a, buff, sizeof(buff)));
+	} else {
+		assertEqualInt(ARCHIVE_FAILED,
+		    archive_read_data(a, buff, sizeof(buff)));
+		assertEqualString(archive_error_string(a),
+		    "Unsupported ZIP compression method (8: deflation)");
+		assert(archive_errno(a) != 0);
+	}
 	
 	assertEqualInt(2, archive_file_count(a));
 

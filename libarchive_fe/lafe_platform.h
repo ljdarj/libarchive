@@ -21,8 +21,6 @@
  * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF
  * THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- *
- * $FreeBSD: src/usr.bin/cpio/cpio_platform.h,v 1.2 2008/12/06 07:15:42 kientzle Exp $
  */
 
 /*
@@ -41,35 +39,4 @@
 /* Read config.h or die trying. */
 #include "config.h"
 #endif
-
-/* Get a real definition for __FBSDID if we can */
-#if HAVE_SYS_CDEFS_H
-#include <sys/cdefs.h>
-#endif
-
-/* If not, define it so as to avoid dangling semicolons. */
-#ifndef __FBSDID
-#define	__FBSDID(a)     struct _undefined_hack
-#endif
-
-/* Borland warns about its own constants!  */
-#if defined(__BORLANDC__)
-# if HAVE_DECL_UINT64_MIN
-#  undef	UINT64_MIN
-#  undef	HAVE_DECL_UINT64_MIN
-# endif
-# if HAVE_DECL_INT64_MAX
-#  undef	INT64_MAX
-#  undef	HAVE_DECL_INT64_MAX
-# endif
-#endif
-
-/* Some platforms lack the standard *_MAX definitions. */
-#if !HAVE_DECL_UINT64_MAX
-#define	UINT64_MAX (~(uint64_t)0)
-#endif
-#if !HAVE_DECL_INT64_MAX
-#define	INT64_MAX ((int64_t)(UINT64_MAX >> 1))
-#endif
-
 #endif

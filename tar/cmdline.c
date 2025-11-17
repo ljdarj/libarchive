@@ -1,26 +1,8 @@
 /*-
+ * SPDX-License-Identifier: BSD-2-Clause
+ *
  * Copyright (c) 2003-2008 Tim Kientzle
  * All rights reserved.
- *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions
- * are met:
- * 1. Redistributions of source code must retain the above copyright
- *    notice, this list of conditions and the following disclaimer.
- * 2. Redistributions in binary form must reproduce the above copyright
- *    notice, this list of conditions and the following disclaimer in the
- *    documentation and/or other materials provided with the distribution.
- *
- * THIS SOFTWARE IS PROVIDED BY THE AUTHOR(S) ``AS IS'' AND ANY EXPRESS OR
- * IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES
- * OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED.
- * IN NO EVENT SHALL THE AUTHOR(S) BE LIABLE FOR ANY DIRECT, INDIRECT,
- * INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT
- * NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
- * DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
- * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
- * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF
- * THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
 /*
@@ -28,7 +10,6 @@
  */
 
 #include "bsdtar_platform.h"
-__FBSDID("$FreeBSD$");
 
 #ifdef HAVE_ERRNO_H
 #include <errno.h>
@@ -41,7 +22,7 @@ __FBSDID("$FreeBSD$");
 #endif
 
 #include "bsdtar.h"
-#include "err.h"
+#include "lafe_err.h"
 
 /*
  * Short options for tar.  Please keep this sorted.
@@ -65,30 +46,37 @@ static const struct bsdtar_option {
 } tar_longopts[] = {
 	{ "absolute-paths",       0, 'P' },
 	{ "append",               0, 'r' },
+	{ "acls",                 0, OPTION_ACLS },
 	{ "auto-compress",        0, 'a' },
 	{ "b64encode",            0, OPTION_B64ENCODE },
 	{ "block-size",           1, 'b' },
+	{ "blocking-factor",	  1, 'b' },
 	{ "bunzip2",              0, 'j' },
 	{ "bzip",                 0, 'j' },
 	{ "bzip2",                0, 'j' },
 	{ "cd",                   1, 'C' },
 	{ "check-links",          0, OPTION_CHECK_LINKS },
 	{ "chroot",               0, OPTION_CHROOT },
+	{ "clamp-mtime",          0, OPTION_CLAMP_MTIME },
+	{ "clear-nochange-fflags", 0, OPTION_CLEAR_NOCHANGE_FFLAGS },
 	{ "compress",             0, 'Z' },
 	{ "confirmation",         0, 'w' },
 	{ "create",               0, 'c' },
 	{ "dereference",	  0, 'L' },
 	{ "directory",            1, 'C' },
-	{ "disable-copyfile",	  0, OPTION_DISABLE_COPYFILE },
+	{ "disable-copyfile",	  0, OPTION_NO_MAC_METADATA },
 	{ "exclude",              1, OPTION_EXCLUDE },
 	{ "exclude-from",         1, 'X' },
+	{ "exclude-vcs",	  0, OPTION_EXCLUDE_VCS },
 	{ "extract",              0, 'x' },
 	{ "fast-read",            0, 'q' },
+	{ "fflags",               0, OPTION_FFLAGS },
 	{ "file",                 1, 'f' },
 	{ "files-from",           1, 'T' },
 	{ "format",               1, OPTION_FORMAT },
 	{ "gid",		  1, OPTION_GID },
 	{ "gname",		  1, OPTION_GNAME },
+	{ "group",		  1, OPTION_GROUP },
 	{ "grzip",                0, OPTION_GRZIP },
 	{ "gunzip",               0, 'z' },
 	{ "gzip",                 0, 'z' },
@@ -106,16 +94,25 @@ static const struct bsdtar_option {
 	{ "lzip",                 0, OPTION_LZIP },
 	{ "lzma",                 0, OPTION_LZMA },
 	{ "lzop",                 0, OPTION_LZOP },
+	{ "mac-metadata",         0, OPTION_MAC_METADATA },
 	{ "modification-time",    0, 'm' },
+	{ "mtime",                1, OPTION_MTIME },
 	{ "newer",		  1, OPTION_NEWER_CTIME },
 	{ "newer-ctime",	  1, OPTION_NEWER_CTIME },
 	{ "newer-ctime-than",	  1, OPTION_NEWER_CTIME_THAN },
 	{ "newer-mtime",	  1, OPTION_NEWER_MTIME },
 	{ "newer-mtime-than",	  1, OPTION_NEWER_MTIME_THAN },
 	{ "newer-than",		  1, OPTION_NEWER_CTIME_THAN },
+	{ "no-acls",              0, OPTION_NO_ACLS },
+	{ "no-fflags",            0, OPTION_NO_FFLAGS },
+	{ "no-mac-metadata",      0, OPTION_NO_MAC_METADATA },
+	{ "no-read-sparse",       0, OPTION_NO_READ_SPARSE },
 	{ "no-recursion",         0, 'n' },
+	{ "no-safe-writes",	  0, OPTION_NO_SAFE_WRITES },
 	{ "no-same-owner",	  0, OPTION_NO_SAME_OWNER },
 	{ "no-same-permissions",  0, OPTION_NO_SAME_PERMISSIONS },
+	{ "no-xattr",             0, OPTION_NO_XATTRS },
+	{ "no-xattrs",            0, OPTION_NO_XATTRS },
 	{ "nodump",               0, OPTION_NODUMP },
 	{ "nopreserveHFSCompression",0, OPTION_NOPRESERVE_HFS_COMPRESSION },
 	{ "norecurse",            0, 'n' },
@@ -129,10 +126,13 @@ static const struct bsdtar_option {
 	{ "older-than",		  1, OPTION_OLDER_CTIME_THAN },
 	{ "one-file-system",	  0, OPTION_ONE_FILE_SYSTEM },
 	{ "options",              1, OPTION_OPTIONS },
+	{ "owner",		  1, OPTION_OWNER },
 	{ "passphrase",		  1, OPTION_PASSPHRASE },
 	{ "posix",		  0, OPTION_POSIX },
 	{ "preserve-permissions", 0, 'p' },
 	{ "read-full-blocks",	  0, 'B' },
+	{ "read-sparse",	  0, OPTION_READ_SPARSE },
+	{ "safe-writes",	  0, OPTION_SAFE_WRITES },
 	{ "same-owner",	          0, OPTION_SAME_OWNER },
 	{ "same-permissions",     0, 'p' },
 	{ "strip-components",	  1, OPTION_STRIP_COMPONENTS },
@@ -148,7 +148,9 @@ static const struct bsdtar_option {
 	{ "uuencode",             0, OPTION_UUENCODE },
 	{ "verbose",              0, 'v' },
 	{ "version",              0, OPTION_VERSION },
+	{ "xattrs",               0, OPTION_XATTRS },
 	{ "xz",                   0, 'J' },
+	{ "zstd",                 0, OPTION_ZSTD },
 	{ NULL, 0, 0 }
 };
 
@@ -200,12 +202,18 @@ bsdtar_getopt(struct bsdtar *bsdtar)
 	enum { state_start = 0, state_old_tar, state_next_word,
 	       state_short, state_long };
 
-	const struct bsdtar_option *popt, *match = NULL, *match2 = NULL;
-	const char *p, *long_prefix = "--";
+	const struct bsdtar_option *popt, *match, *match2;
+	const char *p, *long_prefix;
 	size_t optlength;
-	int opt = '?';
-	int required = 0;
+	int opt;
+	int required;
 
+again:
+	match = NULL;
+	match2 = NULL;
+	long_prefix = "--";
+	opt = '?';
+	required = 0;
 	bsdtar->argument = NULL;
 
 	/* First time through, initialize everything. */
@@ -292,7 +300,7 @@ bsdtar_getopt(struct bsdtar *bsdtar)
 		if (opt == '\0') {
 			/* End of this group; recurse to get next option. */
 			bsdtar->getopt_state = state_next_word;
-			return bsdtar_getopt(bsdtar);
+			goto again;
 		}
 
 		/* Does this option take an argument? */

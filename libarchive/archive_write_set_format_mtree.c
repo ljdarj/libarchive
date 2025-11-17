@@ -25,7 +25,6 @@
  */
 
 #include "archive_platform.h"
-__FBSDID("$FreeBSD: head/lib/libarchive/archive_write_set_format_mtree.c 201171 2009-12-29 06:39:07Z kientzle $");
 
 #ifdef HAVE_SYS_TYPES_H
 #include <sys/types.h>
@@ -37,6 +36,7 @@ __FBSDID("$FreeBSD: head/lib/libarchive/archive_write_set_format_mtree.c 201171 
 #include "archive.h"
 #include "archive_digest_private.h"
 #include "archive_entry.h"
+#include "archive_entry_private.h"
 #include "archive_private.h"
 #include "archive_rb.h"
 #include "archive_string.h"
@@ -54,7 +54,7 @@ struct attr_counter {
 	int count;
 };
 
-struct att_counter_set {
+struct attr_counter_set {
 	struct attr_counter *uid_list;
 	struct attr_counter *gid_list;
 	struct attr_counter *mode_list;
@@ -82,24 +82,8 @@ struct dir_info {
 struct reg_info {
 	int compute_sum;
 	uint32_t crc;
-#ifdef ARCHIVE_HAS_MD5
-	unsigned char buf_md5[16];
-#endif
-#ifdef ARCHIVE_HAS_RMD160
-	unsigned char buf_rmd160[20];
-#endif
-#ifdef ARCHIVE_HAS_SHA1
-	unsigned char buf_sha1[20];
-#endif
-#ifdef ARCHIVE_HAS_SHA256
-	unsigned char buf_sha256[32];
-#endif
-#ifdef ARCHIVE_HAS_SHA384
-	unsigned char buf_sha384[48];
-#endif
-#ifdef ARCHIVE_HAS_SHA512
-	unsigned char buf_sha512[64];
-#endif
+	uint_least32_t mset_digest;
+	struct ae_digest digest;
 };
 
 struct mtree_entry {
@@ -158,7 +142,7 @@ struct mtree_writer {
 		unsigned long	fflags_set;
 		unsigned long	fflags_clear;
 	} set;
-	struct att_counter_set	acs;
+	struct attr_counter_set	acs;
 	int classic;
 	int depth;
 
@@ -186,7 +170,7 @@ struct mtree_writer {
 #endif
 	/* Keyword options */
 	int keys;
-#define	F_CKSUM		0x00000001		/* check sum */
+#define	F_CKSUM		0x00000001		/* checksum */
 #define	F_DEV		0x00000002		/* device type */
 #define	F_DONE		0x00000004		/* directory done */
 #define	F_FLAGS		0x00000008		/* file flags */
@@ -371,7 +355,7 @@ mtree_quote(struct archive_string *s, const char *str)
 }
 
 /*
- * Indent a line as mtree utility to be readable for people.
+ * Indent a line as the mtree utility does so it is readable for people.
  */
 static void
 mtree_indent(struct mtree_writer *mtree)
@@ -446,15 +430,15 @@ mtree_indent(struct mtree_writer *mtree)
 
 /*
  * Write /set keyword.
- * Set most used value of uid,gid,mode and fflags, which are
- * collected by attr_counter_set_collect() function.
+ * Set the most used value of uid, gid, mode and fflags, which are
+ * collected by the attr_counter_set_collect() function.
  */
 static void
 write_global(struct mtree_writer *mtree)
 {
 	struct archive_string setstr;
 	struct archive_string unsetstr;
-	struct att_counter_set *acs;
+	struct attr_counter_set *acs;
 	int keys, oldkeys, effkeys;
 
 	archive_string_init(&setstr);
@@ -649,13 +633,13 @@ attr_counter_inc(struct attr_counter **top, struct attr_counter *ac,
 }
 
 /*
- * Tabulate uid,gid,mode and fflags of a entry in order to be used for /set.
+ * Tabulate uid, gid, mode and fflags of a entry in order to be used for /set.
  */
 static int
 attr_counter_set_collect(struct mtree_writer *mtree, struct mtree_entry *me)
 {
 	struct attr_counter *ac, *last;
-	struct att_counter_set *acs = &mtree->acs;
+	struct attr_counter_set *acs = &mtree->acs;
 	int keys = mtree->keys;
 
 	if (keys & (F_UNAME | F_UID)) {
@@ -731,7 +715,7 @@ attr_counter_set_collect(struct mtree_writer *mtree, struct mtree_entry *me)
 static void
 attr_counter_set_free(struct mtree_writer *mtree)
 {
-	struct att_counter_set *acs = &mtree->acs;
+	struct attr_counter_set *acs = &mtree->acs;
 
 	attr_counter_free(&acs->uid_list);
 	attr_counter_free(&acs->gid_list);
@@ -879,6 +863,50 @@ mtree_entry_free(struct mtree_entry *me)
 	free(me);
 }
 
+static void
+mtree_copy_ae_digests(struct reg_info *reg, struct archive_entry *entry, int compute_sum)
+{
+	reg->compute_sum = compute_sum;
+	reg->mset_digest = entry->mset_digest;
+
+	if ((reg->compute_sum & F_MD5)
+		&& (reg->mset_digest & AE_MSET_DIGEST_MD5)) {
+
+		memcpy(&reg->digest.md5, entry->digest.md5,
+			sizeof(reg->digest.md5));
+	}
+	if ((reg->compute_sum & F_RMD160)
+		&& (reg->mset_digest & AE_MSET_DIGEST_RMD160)) {
+
+		memcpy(&reg->digest.rmd160, entry->digest.rmd160,
+			sizeof(reg->digest.rmd160));
+	}
+	if ((reg->compute_sum & F_SHA1)
+		&& (reg->mset_digest & AE_MSET_DIGEST_SHA1)) {
+
+		memcpy(&reg->digest.sha1, entry->digest.sha1,
+			sizeof(reg->digest.sha1));
+	}
+	if ((reg->compute_sum & F_SHA256)
+		&& (reg->mset_digest & AE_MSET_DIGEST_SHA256)) {
+
+		memcpy(&reg->digest.sha256, entry->digest.sha256,
+			sizeof(reg->digest.sha256));
+	}
+	if ((reg->compute_sum & F_SHA384)
+		&& (reg->mset_digest & AE_MSET_DIGEST_SHA384)) {
+
+		memcpy(&reg->digest.sha384, entry->digest.sha384,
+			sizeof(reg->digest.sha384));
+	}
+	if ((reg->compute_sum & F_SHA512)
+		&& (reg->mset_digest & AE_MSET_DIGEST_SHA512)) {
+
+		memcpy(&reg->digest.sha512, entry->digest.sha512,
+			sizeof(reg->digest.sha512));
+	}
+}
+
 static int
 archive_write_mtree_header(struct archive_write *a,
     struct archive_entry *entry)
@@ -912,9 +940,13 @@ archive_write_mtree_header(struct archive_write *a,
 
 	/* If the current file is a regular file, we have to
 	 * compute the sum of its content.
-	 * Initialize a bunch of sum check context. */
-	if (mtree_entry->reg_info)
+	 * Initialize a bunch of checksum context. */
+	if (mtree_entry->reg_info) {
 		sum_init(mtree);
+		/* honor archive_entry_set_digest() calls. These values will be
+		 * overwritten if archive_write_mtree_data() is called */
+		mtree_copy_ae_digests(mtree_entry->reg_info, entry, mtree->compute_sum);
+	}
 
 	return (r2);
 }
@@ -1115,7 +1147,7 @@ write_mtree_entry_tree(struct archive_write *a)
 	do {
 		if (mtree->output_global_set) {
 			/*
-			 * Collect attribute infomation to know which value
+			 * Collect attribute information to know which value
 			 * is frequently used among the children.
 			 */
 			attr_counter_set_reset(mtree);
@@ -1265,7 +1297,7 @@ archive_write_mtree_free(struct archive_write *a)
 	if (mtree == NULL)
 		return (ARCHIVE_OK);
 
-	/* Make sure we dot not leave any entries. */
+	/* Make sure we do not leave any entries. */
 	mtree_entry_register_free(mtree);
 	archive_string_free(&mtree->cur_dirstr);
 	archive_string_free(&mtree->ebuf);
@@ -1533,28 +1565,46 @@ sum_update(struct mtree_writer *mtree, const void *buff, size_t n)
 		mtree->crc_len += n;
 	}
 #ifdef ARCHIVE_HAS_MD5
-	if (mtree->compute_sum & F_MD5)
+	if (mtree->compute_sum & F_MD5) {
 		archive_md5_update(&mtree->md5ctx, buff, n);
+		mtree->mtree_entry->reg_info->mset_digest &=
+			~AE_MSET_DIGEST_MD5;
+	}
 #endif
 #ifdef ARCHIVE_HAS_RMD160
-	if (mtree->compute_sum & F_RMD160)
+	if (mtree->compute_sum & F_RMD160) {
 		archive_rmd160_update(&mtree->rmd160ctx, buff, n);
+		mtree->mtree_entry->reg_info->mset_digest &=
+			~AE_MSET_DIGEST_RMD160;
+	}
 #endif
 #ifdef ARCHIVE_HAS_SHA1
-	if (mtree->compute_sum & F_SHA1)
+	if (mtree->compute_sum & F_SHA1) {
 		archive_sha1_update(&mtree->sha1ctx, buff, n);
+		mtree->mtree_entry->reg_info->mset_digest &=
+			~AE_MSET_DIGEST_SHA1;
+	}
 #endif
 #ifdef ARCHIVE_HAS_SHA256
-	if (mtree->compute_sum & F_SHA256)
+	if (mtree->compute_sum & F_SHA256) {
 		archive_sha256_update(&mtree->sha256ctx, buff, n);
+		mtree->mtree_entry->reg_info->mset_digest &=
+			~AE_MSET_DIGEST_SHA256;
+	}
 #endif
 #ifdef ARCHIVE_HAS_SHA384
-	if (mtree->compute_sum & F_SHA384)
+	if (mtree->compute_sum & F_SHA384) {
 		archive_sha384_update(&mtree->sha384ctx, buff, n);
+		mtree->mtree_entry->reg_info->mset_digest &=
+			~AE_MSET_DIGEST_SHA384;
+	}
 #endif
 #ifdef ARCHIVE_HAS_SHA512
-	if (mtree->compute_sum & F_SHA512)
+	if (mtree->compute_sum & F_SHA512) {
 		archive_sha512_update(&mtree->sha512ctx, buff, n);
+		mtree->mtree_entry->reg_info->mset_digest &=
+			~AE_MSET_DIGEST_SHA512;
+	}
 #endif
 }
 
@@ -1570,28 +1620,40 @@ sum_final(struct mtree_writer *mtree, struct reg_info *reg)
 		reg->crc = ~mtree->crc;
 	}
 #ifdef ARCHIVE_HAS_MD5
-	if (mtree->compute_sum & F_MD5)
-		archive_md5_final(&mtree->md5ctx, reg->buf_md5);
+	if ((mtree->compute_sum & F_MD5)
+		&& !(reg->mset_digest & AE_MSET_DIGEST_MD5))
+
+		archive_md5_final(&mtree->md5ctx, reg->digest.md5);
 #endif
 #ifdef ARCHIVE_HAS_RMD160
-	if (mtree->compute_sum & F_RMD160)
-		archive_rmd160_final(&mtree->rmd160ctx, reg->buf_rmd160);
+	if ((mtree->compute_sum & F_RMD160)
+		&& !(reg->mset_digest & AE_MSET_DIGEST_RMD160))
+
+		archive_rmd160_final(&mtree->rmd160ctx, reg->digest.rmd160);
 #endif
 #ifdef ARCHIVE_HAS_SHA1
-	if (mtree->compute_sum & F_SHA1)
-		archive_sha1_final(&mtree->sha1ctx, reg->buf_sha1);
+	if ((mtree->compute_sum & F_SHA1)
+		&& !(reg->mset_digest & AE_MSET_DIGEST_SHA1))
+
+		archive_sha1_final(&mtree->sha1ctx, reg->digest.sha1);
 #endif
 #ifdef ARCHIVE_HAS_SHA256
-	if (mtree->compute_sum & F_SHA256)
-		archive_sha256_final(&mtree->sha256ctx, reg->buf_sha256);
+	if ((mtree->compute_sum & F_SHA256)
+		&& !(reg->mset_digest & AE_MSET_DIGEST_SHA256))
+
+		archive_sha256_final(&mtree->sha256ctx, reg->digest.sha256);
 #endif
 #ifdef ARCHIVE_HAS_SHA384
-	if (mtree->compute_sum & F_SHA384)
-		archive_sha384_final(&mtree->sha384ctx, reg->buf_sha384);
+	if ((mtree->compute_sum & F_SHA384)
+		&& !(reg->mset_digest & AE_MSET_DIGEST_SHA384))
+
+		archive_sha384_final(&mtree->sha384ctx, reg->digest.sha384);
 #endif
 #ifdef ARCHIVE_HAS_SHA512
-	if (mtree->compute_sum & F_SHA512)
-		archive_sha512_final(&mtree->sha512ctx, reg->buf_sha512);
+	if ((mtree->compute_sum & F_SHA512)
+		&& !(reg->mset_digest & AE_MSET_DIGEST_SHA512))
+
+		archive_sha512_final(&mtree->sha512ctx, reg->digest.sha512);
 #endif
 	/* Save what types of sum are computed. */
 	reg->compute_sum = mtree->compute_sum;
@@ -1621,42 +1683,47 @@ sum_write(struct archive_string *str, struct reg_info *reg)
 		archive_string_sprintf(str, " cksum=%ju",
 		    (uintmax_t)reg->crc);
 	}
+
+#define append_digest(_s, _r, _t) \
+	strappend_bin(_s, _r->digest._t, sizeof(_r->digest._t))
+
 #ifdef ARCHIVE_HAS_MD5
 	if (reg->compute_sum & F_MD5) {
 		archive_strcat(str, " md5digest=");
-		strappend_bin(str, reg->buf_md5, sizeof(reg->buf_md5));
+		append_digest(str, reg, md5);
 	}
 #endif
 #ifdef ARCHIVE_HAS_RMD160
 	if (reg->compute_sum & F_RMD160) {
 		archive_strcat(str, " rmd160digest=");
-		strappend_bin(str, reg->buf_rmd160, sizeof(reg->buf_rmd160));
+		append_digest(str, reg, rmd160);
 	}
 #endif
 #ifdef ARCHIVE_HAS_SHA1
 	if (reg->compute_sum & F_SHA1) {
 		archive_strcat(str, " sha1digest=");
-		strappend_bin(str, reg->buf_sha1, sizeof(reg->buf_sha1));
+		append_digest(str, reg, sha1);
 	}
 #endif
 #ifdef ARCHIVE_HAS_SHA256
 	if (reg->compute_sum & F_SHA256) {
 		archive_strcat(str, " sha256digest=");
-		strappend_bin(str, reg->buf_sha256, sizeof(reg->buf_sha256));
+		append_digest(str, reg, sha256);
 	}
 #endif
 #ifdef ARCHIVE_HAS_SHA384
 	if (reg->compute_sum & F_SHA384) {
 		archive_strcat(str, " sha384digest=");
-		strappend_bin(str, reg->buf_sha384, sizeof(reg->buf_sha384));
+		append_digest(str, reg, sha384);
 	}
 #endif
 #ifdef ARCHIVE_HAS_SHA512
 	if (reg->compute_sum & F_SHA512) {
 		archive_strcat(str, " sha512digest=");
-		strappend_bin(str, reg->buf_sha512, sizeof(reg->buf_sha512));
+		append_digest(str, reg, sha512);
 	}
 #endif
+#undef append_digest
 }
 
 static int
@@ -1810,10 +1877,10 @@ mtree_entry_setup_filenames(struct archive_write *a, struct mtree_entry *file,
 		if (p[0] == '/') {
 			if (p[1] == '/')
 				/* Convert '//' --> '/' */
-				strcpy(p, p+1);
+				memmove(p, p+1, strlen(p+1) + 1);
 			else if (p[1] == '.' && p[2] == '/')
 				/* Convert '/./' --> '/' */
-				strcpy(p, p+2);
+				memmove(p, p+2, strlen(p+2) + 1);
 			else if (p[1] == '.' && p[2] == '.' && p[3] == '/') {
 				/* Convert 'dir/dir1/../dir2/'
 				 *     --> 'dir/dir2/'
@@ -1840,9 +1907,9 @@ mtree_entry_setup_filenames(struct archive_write *a, struct mtree_entry *file,
 	len = strlen(p);
 
 	/*
-	 * Add "./" prefiex.
+	 * Add "./" prefix.
 	 * NOTE: If the pathname does not have a path separator, we have
-	 * to add "./" to the head of the pathename because mtree reader
+	 * to add "./" to the head of the pathname because mtree reader
 	 * will suppose that it is v1(a.k.a classic) mtree format and
 	 * change the directory unexpectedly and so it will make a wrong
 	 * path.
@@ -1860,7 +1927,7 @@ mtree_entry_setup_filenames(struct archive_write *a, struct mtree_entry *file,
 	}
 
 	/*
-	 * Find out the position which points the last position of
+	 * Find out the position which points to the last position of
 	 * path separator('/').
 	 */
 	slash = NULL;
@@ -1957,7 +2024,7 @@ mtree_entry_add_child_tail(struct mtree_entry *parent,
 }
 
 /*
- * Find a entry from a parent entry with the name.
+ * Find an entry from a parent entry with given name.
  */
 static struct mtree_entry *
 mtree_entry_find_child(struct mtree_entry *parent, const char *child_name)
@@ -2024,7 +2091,7 @@ mtree_entry_tree_add(struct archive_write *a, struct mtree_entry **filep)
 
 	if (file->parentdir.length == 0) {
 		archive_set_error(&a->archive, ARCHIVE_ERRNO_MISC,
-		    "Internal programing error "
+		    "Internal programming error "
 		    "in generating canonical name for %s",
 		    file->pathname.s);
 		return (ARCHIVE_FAILED);
@@ -2081,10 +2148,10 @@ mtree_entry_tree_add(struct archive_write *a, struct mtree_entry **filep)
 
 		/* Find next sub directory. */
 		if (!np->dir_info) {
-			/* NOT Directory! */
+			/* NOT a directory! */
 			archive_set_error(&a->archive,
 			    ARCHIVE_ERRNO_MISC,
-			    "`%s' is not directory, we cannot insert `%s' ",
+			    "`%s' is not a directory, we cannot insert `%s' ",
 			    np->pathname.s, file->pathname.s);
 			return (ARCHIVE_FAILED);
 		}
@@ -2142,9 +2209,13 @@ mtree_entry_tree_add(struct archive_write *a, struct mtree_entry **filep)
 		 * inserted. */
 		mtree->cur_dirent = dent;
 		archive_string_empty(&(mtree->cur_dirstr));
-		archive_string_ensure(&(mtree->cur_dirstr),
+		if (archive_string_ensure(&(mtree->cur_dirstr),
 		    archive_strlen(&(dent->parentdir)) +
-		    archive_strlen(&(dent->basename)) + 2);
+		    archive_strlen(&(dent->basename)) + 2) == NULL) {
+			archive_set_error(&a->archive, ENOMEM,
+			    "Can't allocate memory");
+			return (ARCHIVE_FATAL);
+		}
 		if (archive_strlen(&(dent->parentdir)) +
 		    archive_strlen(&(dent->basename)) == 0)
 			mtree->cur_dirstr.s[0] = 0;
@@ -2172,10 +2243,7 @@ mtree_entry_tree_add(struct archive_write *a, struct mtree_entry **filep)
 	}
 
 same_entry:
-	/*
-	 * We have already has the entry the filename of which is
-	 * the same.
-	 */
+	/* We already have an entry with same filename. */
 	r = mtree_entry_exchange_same_entry(a, np, file);
 	if (r < ARCHIVE_WARN)
 		return (r);
@@ -2193,13 +2261,13 @@ mtree_entry_exchange_same_entry(struct archive_write *a, struct mtree_entry *np,
 
 	if ((np->mode & AE_IFMT) != (file->mode & AE_IFMT)) {
 		archive_set_error(&a->archive, ARCHIVE_ERRNO_MISC,
-		    "Found duplicate entries `%s' and its file type is "
-		    "different",
+		    "Found duplicate entries for `%s' with "
+		    "differing file types.",
 		    np->pathname.s);
 		return (ARCHIVE_FAILED);
 	}
 
-	/* Update the existent mtree entry's attributes by the new one's. */
+	/* Update the existing mtree entry's attributes by the new one's. */
 	archive_string_empty(&np->symlink);
 	archive_string_concat(&np->symlink, &file->symlink);
 	archive_string_empty(&np->uname);

@@ -43,7 +43,6 @@
  * regular dir or via fchdir(2) for a symlink).
  */
 #include "tree_config.h"
-__FBSDID("$FreeBSD$");
 
 #ifdef HAVE_SYS_STAT_H
 #include <sys/stat.h>
@@ -530,8 +529,7 @@ tree_close(struct tree *t)
 	/* Release anything remaining in the stack. */
 	while (t->stack != NULL)
 		tree_pop(t);
-	if (t->buff)
-		free(t->buff);
+	free(t->buff);
 	/* chdir() back to where we started. */
 	if (t->initialDirFd >= 0) {
 		fchdir(t->initialDirFd);

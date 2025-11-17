@@ -1,30 +1,11 @@
 /*-
+ * SPDX-License-Identifier: BSD-2-Clause
+ *
  * Copyright (c) 2012 Michihiro NAKAJIMA
  * All rights reserved.
- *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions
- * are met:
- * 1. Redistributions of source code must retain the above copyright
- *    notice, this list of conditions and the following disclaimer.
- * 2. Redistributions in binary form must reproduce the above copyright
- *    notice, this list of conditions and the following disclaimer in the
- *    documentation and/or other materials provided with the distribution.
- *
- * THIS SOFTWARE IS PROVIDED BY THE AUTHOR(S) ``AS IS'' AND ANY EXPRESS OR
- * IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES
- * OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED.
- * IN NO EVENT SHALL THE AUTHOR(S) BE LIABLE FOR ANY DIRECT, INDIRECT,
- * INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT
- * NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
- * DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
- * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
- * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF
- * THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
 #include "bsdtar_platform.h"
-__FBSDID("$FreeBSD$");
 
 #ifdef HAVE_STDLIB_H
 #include <stdlib.h>
@@ -34,7 +15,7 @@ __FBSDID("$FreeBSD$");
 #endif
 
 #include "bsdtar.h"
-#include "err.h"
+#include "lafe_err.h"
 
 struct creation_set {
 	char		 *create_format;
@@ -80,9 +61,10 @@ get_filter_code(const char *suffix)
 		{ ".lzma",	"lzma" },
 		{ ".uu",	"uuencode" },
 		{ ".xz",	"xz" },
+		{ ".zst",	"zstd"},
 		{ NULL,		NULL }
 	};
-	
+
 	return get_suffix_code(filters, suffix);
 }
 
@@ -94,7 +76,7 @@ get_format_code(const char *suffix)
 		{ ".7z",	"7zip" },
 		{ ".ar",	"arbsd" },
 		{ ".cpio",	"cpio" },
-		{ ".iso",	"iso9960" },
+		{ ".iso",	"iso9660" },
 		{ ".mtree",	"mtree" },
 		{ ".shar",	"shar" },
 		{ ".tar",	"paxr" },
@@ -121,6 +103,7 @@ decompose_alias(const char *suffix)
 		{ ".tzo",	".tar.lzo" },
 		{ ".taZ",	".tar.Z" },
 		{ ".tZ",	".tar.Z" },
+		{ ".tzst",	".tar.zst" },
 		{ NULL,		NULL }
 	};
 
@@ -133,7 +116,7 @@ _cset_add_filter(struct creation_set *cset, int program, const char *filter)
 	struct filter_set *new_ptr;
 	char *new_filter;
 
-	new_ptr = (struct filter_set *)realloc(cset->filters,
+	new_ptr = realloc(cset->filters,
 	    sizeof(*cset->filters) * (cset->filter_count + 1));
 	if (new_ptr == NULL)
 		lafe_errc(1, 0, "No memory");
@@ -295,7 +278,7 @@ cset_auto_compress(struct creation_set *cset, const char *filename)
 		struct filter_set *v;
 		int i, r;
 
-		/* Release previos filters. */
+		/* Release previous filters. */
 		_cleanup_filters(old_filters, old_filter_count);
 
 		v = malloc(sizeof(*v) * cset->filter_count);
@@ -308,7 +291,7 @@ cset_auto_compress(struct creation_set *cset, const char *filename)
 		cset->filters = v;
 		return (1);
 	} else {
-		/* Put previos filters back. */
+		/* Put previous filters back. */
 		cset->filters = old_filters;
 		cset->filter_count = old_filter_count;
 		return (0);

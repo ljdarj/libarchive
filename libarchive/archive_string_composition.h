@@ -22,8 +22,6 @@
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF
  * THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  *
- * $FreeBSD$
- *
  */
 
 /*
@@ -34,12 +32,12 @@
  *  See also http://unicode.org/report/tr15/
  */
 
+#ifndef ARCHIVE_STRING_COMPOSITION_H_INCLUDED
+#define ARCHIVE_STRING_COMPOSITION_H_INCLUDED
+
 #ifndef __LIBARCHIVE_BUILD
 #error This header is only to be used internally to libarchive.
 #endif
-
-#ifndef ARCHIVE_STRING_COMPOSITION_H_INCLUDED
-#define ARCHIVE_STRING_COMPOSITION_H_INCLUDED
 
 struct unicode_composition_table {
 	uint32_t cp1;
@@ -1009,7 +1007,7 @@ static const char u_decomposable_blocks[0x1D2+1] = {
 	(((uc) > 0x1D244)?0:\
 	ccc_val[ccc_val_index[ccc_index[(uc)>>8]][((uc)>>4)&0x0F]][(uc)&0x0F])
 
-/* The table of the value of Canonical Cimbining Class */
+/* The table of the value of Canonical Combining Class */
 static const unsigned char ccc_val[][16] = {
  /* idx=0: XXXX0 - XXXXF */
  { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 },
@@ -2288,5 +2286,4 @@ static const struct unicode_decomposition_table u_decomposition_table[] = {
 	{ 0x110AB , 0x110A5 , 0x110BA },
 };
 
-#endif /* ARCHIVE_STRING_COMPOSITION_H_INCLUDED */
-
+#endif /* !ARCHIVE_STRING_COMPOSITION_H_INCLUDED */

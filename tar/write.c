@@ -1,31 +1,12 @@
 /*-
+ * SPDX-License-Identifier: BSD-2-Clause
+ *
  * Copyright (c) 2003-2007 Tim Kientzle
  * Copyright (c) 2012 Michihiro NAKAJIMA
  * All rights reserved.
- *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions
- * are met:
- * 1. Redistributions of source code must retain the above copyright
- *    notice, this list of conditions and the following disclaimer.
- * 2. Redistributions in binary form must reproduce the above copyright
- *    notice, this list of conditions and the following disclaimer in the
- *    documentation and/or other materials provided with the distribution.
- *
- * THIS SOFTWARE IS PROVIDED BY THE AUTHOR(S) ``AS IS'' AND ANY EXPRESS OR
- * IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES
- * OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED.
- * IN NO EVENT SHALL THE AUTHOR(S) BE LIABLE FOR ANY DIRECT, INDIRECT,
- * INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT
- * NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
- * DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
- * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
- * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF
- * THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
 #include "bsdtar_platform.h"
-__FBSDID("$FreeBSD: src/usr.bin/tar/write.c,v 1.79 2008/11/27 05:49:52 kientzle Exp $");
 
 #ifdef HAVE_SYS_TYPES_H
 #include <sys/types.h>
@@ -33,7 +14,9 @@ __FBSDID("$FreeBSD: src/usr.bin/tar/write.c,v 1.79 2008/11/27 05:49:52 kientzle 
 #ifdef HAVE_SYS_STAT_H
 #include <sys/stat.h>
 #endif
-#ifdef HAVE_ATTR_XATTR_H
+#if HAVE_SYS_XATTR_H
+#include <sys/xattr.h>
+#elif HAVE_ATTR_XATTR_H
 #include <attr/xattr.h>
 #endif
 #ifdef HAVE_ERRNO_H
@@ -75,7 +58,7 @@ __FBSDID("$FreeBSD: src/usr.bin/tar/write.c,v 1.79 2008/11/27 05:49:52 kientzle 
 #endif
 
 #include "bsdtar.h"
-#include "err.h"
+#include "lafe_err.h"
 #include "line_reader.h"
 
 #ifndef O_BINARY
@@ -128,7 +111,32 @@ seek_file(int fd, int64_t offset, int whence)
 	return (SetFilePointerEx((HANDLE)_get_osfhandle(fd),
 		distance, NULL, FILE_BEGIN) ? 1 : -1);
 }
-#define	open _open
+
+static int
+_open_wrap_sopen(char const *const path, int const oflag, ...)
+{
+	va_list ap;
+	int r, pmode;
+
+	pmode = 0;
+	if (oflag & _O_CREAT)
+	{
+		va_start(ap, oflag);
+		pmode = va_arg(ap, int);
+		va_end(ap);
+	}
+
+	_sopen_s(&r, path, oflag, _SH_DENYNO, pmode & 0600);
+	if (r < 0)
+	{
+		/* _sopen_s populates errno */
+		return -1;
+	}
+
+	return r;
+}
+
+#define	open _open_wrap_sopen
 #define	close _close
 #define	read _read
 #ifdef lseek
@@ -145,18 +153,17 @@ set_writer_options(struct bsdtar *bsdtar, struct archive *a)
 
 	writer_options = getenv(ENV_WRITER_OPTIONS);
 	if (writer_options != NULL) {
+		size_t module_len = sizeof(IGNORE_WRONG_MODULE_NAME) - 1;
+		size_t opt_len = strlen(writer_options) + 1;
 		char *p;
 		/* Set default write options. */
-		p = malloc(sizeof(IGNORE_WRONG_MODULE_NAME)
-		    + strlen(writer_options) + 1);
-		if (p == NULL)
+		if ((p = malloc(module_len + opt_len)) == NULL)
 			lafe_errc(1, errno, "Out of memory");
 		/* Prepend magic code to ignore options for
 		 * a format or filters which are not added to
 		 * the archive write object. */
-		strncpy(p, IGNORE_WRONG_MODULE_NAME,
-		    sizeof(IGNORE_WRONG_MODULE_NAME) -1);
-		strcpy(p + sizeof(IGNORE_WRONG_MODULE_NAME) -1, writer_options);
+		memcpy(p, IGNORE_WRONG_MODULE_NAME, module_len);
+		memcpy(p, writer_options, opt_len);
 		r = archive_write_set_options(a, p);
 		free(p);
 		if (r < ARCHIVE_WARN)
@@ -178,18 +185,18 @@ set_reader_options(struct bsdtar *bsdtar, struct archive *a)
 
 	reader_options = getenv(ENV_READER_OPTIONS);
 	if (reader_options != NULL) {
+		size_t module_len = sizeof(IGNORE_WRONG_MODULE_NAME) - 1;
+		size_t opt_len = strlen(reader_options) + 1;
 		char *p;
 		/* Set default write options. */
-		p = malloc(sizeof(IGNORE_WRONG_MODULE_NAME)
-		    + strlen(reader_options) + 1);
+		if ((p = malloc(module_len + opt_len)) == NULL)
 		if (p == NULL)
 			lafe_errc(1, errno, "Out of memory");
 		/* Prepend magic code to ignore options for
 		 * a format or filters which are not added to
 		 * the archive write object. */
-		strncpy(p, IGNORE_WRONG_MODULE_NAME,
-		    sizeof(IGNORE_WRONG_MODULE_NAME) -1);
-		strcpy(p + sizeof(IGNORE_WRONG_MODULE_NAME) -1, reader_options);
+		memcpy(p, IGNORE_WRONG_MODULE_NAME, module_len);
+		memcpy(p, reader_options, opt_len);
 		r = archive_read_set_options(a, p);
 		free(p);
 		if (r < ARCHIVE_WARN)
@@ -197,6 +204,10 @@ set_reader_options(struct bsdtar *bsdtar, struct archive *a)
 		else
 			archive_clear_error(a);
 	}
+	if (bsdtar->flags & OPTFLAG_IGNORE_ZEROS)
+		if (archive_read_set_options(a,
+		    "read_concatenated_archives") != ARCHIVE_OK)
+			lafe_errc(1, 0, "%s", archive_error_string(a));
 }
 
 void
@@ -504,7 +515,7 @@ write_archive(struct archive *a, struct bsdtar *bsdtar)
 			}
 			set_chdir(bsdtar, arg);
 		} else {
-			if (*arg != '/' && (arg[0] != '@' || arg[1] != '/'))
+			if (*arg != '/')
 				do_chdir(bsdtar); /* Handle a deferred -C */
 			if (*arg == '@') {
 				if (append_archive_filename(bsdtar, a,
@@ -527,7 +538,7 @@ write_archive(struct archive *a, struct bsdtar *bsdtar)
 		struct archive *disk = bsdtar->diskreader;
 
 		/*
-		 * This tricky code here is to correctly read the cotents
+		 * This tricky code here is to correctly read the contents
 		 * of the entry because the disk reader bsdtar->diskreader
 		 * is pointing at does not have any information about the
 		 * entry by this time and using archive_read_data_block()
@@ -541,8 +552,7 @@ write_archive(struct archive *a, struct bsdtar *bsdtar)
 			lafe_warnc(archive_errno(disk),
 			    "%s", archive_error_string(disk));
 			bsdtar->return_value = 1;
-			archive_entry_free(entry);
-			continue;
+			goto next_entry;
 		}
 
 		/*
@@ -558,15 +568,14 @@ write_archive(struct archive *a, struct bsdtar *bsdtar)
 			    "%s", archive_error_string(disk));
 			if (r == ARCHIVE_FATAL)
 				bsdtar->return_value = 1;
-			else
-				archive_read_close(disk);
-			archive_entry_free(entry);
-			continue;
+			archive_read_close(disk);
+			goto next_entry;
 		}
 
 		write_file(bsdtar, a, entry);
-		archive_entry_free(entry);
 		archive_read_close(disk);
+next_entry:
+		archive_entry_free(entry);
 		entry = NULL;
 		archive_entry_linkify(bsdtar->resolver, &entry, &sparse_entry);
 	}
@@ -584,7 +593,7 @@ cleanup:
 	archive_read_free(bsdtar->diskreader);
 	bsdtar->diskreader = NULL;
 
-	if (bsdtar->option_totals) {
+	if (bsdtar->flags & OPTFLAG_TOTALS) {
 		fprintf(stderr, "Total bytes written: %s\n",
 		    tar_i64toa(archive_filter_bytes(a, -1)));
 	}
@@ -607,7 +616,8 @@ archive_names_from_file(struct bsdtar *bsdtar, struct archive *a)
 
 	bsdtar->next_line_is_dir = 0;
 
-	lr = lafe_line_reader(bsdtar->names_from_file, bsdtar->option_null);
+	lr = lafe_line_reader(bsdtar->names_from_file,
+	    (bsdtar->flags & OPTFLAG_NULL));
 	while ((line = lafe_line_reader_next(lr)) != NULL) {
 		if (bsdtar->next_line_is_dir) {
 			if (*line != '\0')
@@ -618,7 +628,8 @@ archive_names_from_file(struct bsdtar *bsdtar, struct archive *a)
 				bsdtar->return_value = 1;
 			}
 			bsdtar->next_line_is_dir = 0;
-		} else if (!bsdtar->option_null && strcmp(line, "-C") == 0)
+		} else if (((bsdtar->flags & OPTFLAG_NULL) == 0) &&
+		    strcmp(line, "-C") == 0)
 			bsdtar->next_line_is_dir = 1;
 		else {
 			if (*line != '/')
@@ -691,10 +702,16 @@ append_archive(struct bsdtar *bsdtar, struct archive *a, struct archive *ina)
 	while (ARCHIVE_OK == (e = archive_read_next_header(ina, &in_entry))) {
 		if (archive_match_excluded(bsdtar->matching, in_entry))
 			continue;
-		if (bsdtar->option_interactive &&
+		if(edit_pathname(bsdtar, in_entry))
+			continue;
+		if ((bsdtar->flags & OPTFLAG_INTERACTIVE) &&
 		    !yes("copy '%s'", archive_entry_pathname(in_entry)))
 			continue;
-		if (bsdtar->verbose)
+		edit_mtime(bsdtar, in_entry);
+		if (bsdtar->verbose > 1) {
+			safe_fprintf(stderr, "a ");
+			list_item_verbose(bsdtar, stderr, in_entry);
+		} else if (bsdtar->verbose > 0)
 			safe_fprintf(stderr, "a %s",
 			    archive_entry_pathname(in_entry));
 		if (need_report())
@@ -807,11 +824,11 @@ excluded_callback(struct archive *a, void *_data, struct archive_entry *entry)
 {
 	struct bsdtar *bsdtar = (struct bsdtar *)_data;
 
-	if (bsdtar->option_no_subdirs)
+	if (bsdtar->flags & OPTFLAG_NO_SUBDIRS)
 		return;
 	if (!archive_read_disk_can_descend(a))
 		return;
-	if (bsdtar->option_interactive &&
+	if ((bsdtar->flags & OPTFLAG_INTERACTIVE) &&
 	    !yes("add '%s'", archive_entry_pathname(entry)))
 		return;
 	archive_read_disk_descend(a);
@@ -842,12 +859,13 @@ metadata_filter(struct archive *a, void *_data, struct archive_entry *entry)
 	 * check would veto this file, we shouldn't bother
 	 * the user with it.
 	 */
-	if (bsdtar->option_interactive &&
+	if ((bsdtar->flags & OPTFLAG_INTERACTIVE) &&
 	    !yes("add '%s'", archive_entry_pathname(entry)))
 		return (0);
 
 	/* Note: if user vetoes, we won't descend. */
-	if (!bsdtar->option_no_subdirs && archive_read_disk_can_descend(a))
+	if (((bsdtar->flags & OPTFLAG_NO_SUBDIRS) == 0) &&
+	    archive_read_disk_can_descend(a))
 		archive_read_disk_descend(a);
 
 	return (1);
@@ -881,8 +899,10 @@ write_hierarchy(struct bsdtar *bsdtar, struct archive *a, const char *path)
 		else if (r != ARCHIVE_OK) {
 			lafe_warnc(archive_errno(disk),
 			    "%s", archive_error_string(disk));
-			if (r == ARCHIVE_FATAL) {
+			if (r == ARCHIVE_FATAL || r == ARCHIVE_FAILED) {
 				bsdtar->return_value = 1;
+				archive_entry_free(entry);
+				archive_read_close(disk);
 				return;
 			} else if (r < ARCHIVE_WARN)
 				continue;
@@ -914,11 +934,18 @@ write_hierarchy(struct bsdtar *bsdtar, struct archive *a, const char *path)
 		if (edit_pathname(bsdtar, entry))
 			continue;
 
-		/* Display entry as we process it.
-		 * This format is required by SUSv2. */
-		if (bsdtar->verbose)
+		/* Rewrite the mtime. */
+		edit_mtime(bsdtar, entry);
+
+		/* Display entry as we process it. */
+		if (bsdtar->verbose > 1) {
+			safe_fprintf(stderr, "a ");
+			list_item_verbose(bsdtar, stderr, entry);
+		} else if (bsdtar->verbose > 0) {
+		/* This format is required by SUSv2. */
 			safe_fprintf(stderr, "a %s",
 			    archive_entry_pathname(entry));
+		}
 
 		/* Non-regular files get archived with zero size. */
 		if (archive_entry_filetype(entry) != AE_IFREG)
@@ -928,7 +955,9 @@ write_hierarchy(struct bsdtar *bsdtar, struct archive *a, const char *path)
 
 		while (entry != NULL) {
 			write_file(bsdtar, a, entry);
-			archive_entry_free(entry);
+			if (entry != spare_entry) {
+				archive_entry_free(entry);
+			}
 			entry = spare_entry;
 			spare_entry = NULL;
 		}
@@ -962,12 +991,15 @@ write_entry(struct bsdtar *bsdtar, struct archive *a,
 
 	e = archive_write_header(a, entry);
 	if (e != ARCHIVE_OK) {
-		if (!bsdtar->verbose)
+		if (bsdtar->verbose > 1) {
+			safe_fprintf(stderr, "a ");
+			list_item_verbose(bsdtar, stderr, entry);
+			lafe_warnc(0, ": %s", archive_error_string(a));
+		} else {
 			lafe_warnc(0, "%s: %s",
 			    archive_entry_pathname(entry),
 			    archive_error_string(a));
-		else
-			fprintf(stderr, ": %s", archive_error_string(a));
+		}
 	}
 
 	if (e == ARCHIVE_FATAL)
@@ -998,7 +1030,7 @@ report_write(struct bsdtar *bsdtar, struct archive *a,
 	uncomp = archive_filter_bytes(a, 0);
 	fprintf(stderr, "In: %d files, %s bytes;",
 	    archive_file_count(a), tar_i64toa(uncomp));
-	if (comp > uncomp)
+	if (comp >= uncomp)
 		compression = 0;
 	else
 		compression = (int)((uncomp - comp) * 100 / uncomp);

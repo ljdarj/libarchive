@@ -25,7 +25,6 @@
  * THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 #include "archive_platform.h"
-__FBSDID("$FreeBSD$");
 
 #if defined(_WIN32) && !defined(__CYGWIN__)
 
@@ -42,6 +41,7 @@ __FBSDID("$FreeBSD$");
 #include "archive_entry.h"
 #include "archive_private.h"
 #include "archive_read_disk_private.h"
+#include "archive_time_private.h"
 
 #ifndef O_BINARY
 #define O_BINARY	0
@@ -50,6 +50,10 @@ __FBSDID("$FreeBSD$");
 /* Old SDKs do not provide IO_REPARSE_TAG_SYMLINK */
 #define	IO_REPARSE_TAG_SYMLINK 0xA000000CL
 #endif
+/* To deal with absolute symlink issues */
+#define START_ABSOLUTE_SYMLINK_REPARSE L"\\??\\"
+
+#define MAX_FILESYSTEM_ID 1000000
 
 /*-
  * This is a new directory-walking system that addresses a number
@@ -117,7 +121,7 @@ struct filesystem {
  */
 
 #define MAX_OVERLAPPED	8
-#define BUFFER_SIZE	(1024 * 8)
+#define READ_BUFFER_SIZE	(1024 * 64) /* Default to 64KB per https://technet.microsoft.com/en-us/library/cc938632.aspx */
 #define DIRECT_IO	0/* Disabled */
 #define ASYNC_IO	1/* Enabled */
 
@@ -168,7 +172,7 @@ struct tree {
 	int			 initial_filesystem_id;
 	int			 current_filesystem_id;
 	int			 max_filesystem_id;
-	int			 allocated_filesytem;
+	int			 allocated_filesystem;
 
 	HANDLE			 entry_fh;
 	int			 entry_eof;
@@ -288,6 +292,8 @@ static int	_archive_read_free(struct archive *);
 static int	_archive_read_close(struct archive *);
 static int	_archive_read_data_block(struct archive *,
 		    const void **, size_t *, int64_t *);
+static int	_archive_read_next_header(struct archive *,
+		    struct archive_entry **);
 static int	_archive_read_next_header2(struct archive *,
 		    struct archive_entry *);
 static const char *trivial_lookup_gname(void *, int64_t gid);
@@ -297,27 +303,181 @@ static int	close_and_restore_time(HANDLE, struct tree *,
 		    struct restore_time *);
 static int	setup_sparse_from_disk(struct archive_read_disk *,
 		    struct archive_entry *, HANDLE);
+static int	la_linkname_from_handle(HANDLE, wchar_t **, int *);
+static int	la_linkname_from_pathw(const wchar_t *, wchar_t **, int *);
+static void	entry_symlink_from_pathw(struct archive_entry *,
+		    const wchar_t *path);
 
+typedef struct _REPARSE_DATA_BUFFER {
+	ULONG	ReparseTag;
+	USHORT ReparseDataLength;
+	USHORT	Reserved;
+	union {
+		struct {
+			USHORT	SubstituteNameOffset;
+			USHORT	SubstituteNameLength;
+			USHORT	PrintNameOffset;
+			USHORT	PrintNameLength;
+			ULONG	Flags;
+			WCHAR	PathBuffer[1];
+		} SymbolicLinkReparseBuffer;
+		struct {
+			USHORT	SubstituteNameOffset;
+			USHORT	SubstituteNameLength;
+			USHORT	PrintNameOffset;
+			USHORT	PrintNameLength;
+			WCHAR	PathBuffer[1];
+		} MountPointReparseBuffer;
+		struct {
+			UCHAR	DataBuffer[1];
+		} GenericReparseBuffer;
+	} DUMMYUNIONNAME;
+} REPARSE_DATA_BUFFER, *PREPARSE_DATA_BUFFER;
 
-
-static struct archive_vtable *
-archive_read_disk_vtable(void)
+/*
+ * Reads the target of a symbolic link
+ *
+ * Returns 0 on success and -1 on failure
+ * outbuf is allocated in the function
+ */
+static int
+la_linkname_from_handle(HANDLE h, wchar_t **linkname, int *linktype)
 {
-	static struct archive_vtable av;
-	static int inited = 0;
+	DWORD inbytes;
+	REPARSE_DATA_BUFFER *buf;
+	BY_HANDLE_FILE_INFORMATION st;
+	size_t len;
+	BOOL ret;
+	BYTE *indata;
+	wchar_t *tbuf;
 
-	if (!inited) {
-		av.archive_free = _archive_read_free;
-		av.archive_close = _archive_read_close;
-		av.archive_read_data_block = _archive_read_data_block;
-		av.archive_read_next_header2 = _archive_read_next_header2;
-		inited = 1;
+	ret = GetFileInformationByHandle(h, &st);
+	if (ret == 0 ||
+	    (st.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) == 0) {
+		return (-1);
 	}
-	return (&av);
+
+	indata = malloc(MAXIMUM_REPARSE_DATA_BUFFER_SIZE);
+	ret = DeviceIoControl(h, FSCTL_GET_REPARSE_POINT, NULL, 0, indata,
+	    1024, &inbytes, NULL);
+	if (ret == 0) {
+		la_dosmaperr(GetLastError());
+		free(indata);
+		return (-1);
+	}
+
+	buf = (REPARSE_DATA_BUFFER *) indata;
+	if (buf->ReparseTag != IO_REPARSE_TAG_SYMLINK) {
+		free(indata);
+		/* File is not a symbolic link */
+		errno = EINVAL;
+		return (-1);
+	}
+
+	len = buf->SymbolicLinkReparseBuffer.SubstituteNameLength;
+	if (len <= 0) {
+		free(indata);
+		return (-1);
+	}
+
+	tbuf = malloc(len + sizeof(wchar_t));
+	if (tbuf == NULL) {
+		free(indata);
+		return (-1);
+	}
+
+	memcpy(tbuf, &((BYTE *)buf->SymbolicLinkReparseBuffer.PathBuffer)
+	    [buf->SymbolicLinkReparseBuffer.SubstituteNameOffset], len);
+	free(indata);
+
+	tbuf[len / sizeof(wchar_t)] = L'\0';
+	if (wcsncmp(tbuf, START_ABSOLUTE_SYMLINK_REPARSE, 4) == 0) {
+		/* Absolute symlink, so we'll change the NT path into a verbatim one */
+		tbuf[1] = L'\\';
+	} else {
+		/* Relative symlink, so we can translate backslashes to slashes */
+		wchar_t *temp = tbuf;
+		do {
+			if (*temp == L'\\')
+				*temp = L'/';
+			temp++;
+		} while(*temp != L'\0');
+	}
+
+	*linkname = tbuf;
+
+	if ((st.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) == 0)
+		*linktype = AE_SYMLINK_TYPE_FILE;
+	else
+		*linktype = AE_SYMLINK_TYPE_DIRECTORY;
+
+	return (0);
 }
 
+/*
+ * Returns AE_SYMLINK_TYPE_FILE, AE_SYMLINK_TYPE_DIRECTORY or -1 on error
+ */
+static int
+la_linkname_from_pathw(const wchar_t *path, wchar_t **outbuf, int *linktype)
+{
+	HANDLE h;
+	const DWORD flag = FILE_FLAG_BACKUP_SEMANTICS |
+	    FILE_FLAG_OPEN_REPARSE_POINT;
+	int ret;
+
+# if _WIN32_WINNT >= 0x0602 /* _WIN32_WINNT_WIN8 */
+	CREATEFILE2_EXTENDED_PARAMETERS createExParams;
+	ZeroMemory(&createExParams, sizeof(createExParams));
+	createExParams.dwSize = sizeof(createExParams);
+	createExParams.dwFileFlags = flag;
+	h = CreateFile2(path, 0,
+	    FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+	    OPEN_EXISTING, &createExParams);
+#else
+	h = CreateFileW(path, 0,
+	    FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, NULL,
+	    OPEN_EXISTING, flag, NULL);
+#endif
+	if (h == INVALID_HANDLE_VALUE) {
+		la_dosmaperr(GetLastError());
+		return (-1);
+	}
+
+	ret = la_linkname_from_handle(h, outbuf, linktype);
+	CloseHandle(h);
+
+	return (ret);
+}
+
+static void
+entry_symlink_from_pathw(struct archive_entry *entry, const wchar_t *path)
+{
+	wchar_t *linkname = NULL;
+	int ret, linktype;
+
+	ret = la_linkname_from_pathw(path, &linkname, &linktype);
+	if (ret != 0)
+		return;
+	if (linktype >= 0) {
+		archive_entry_copy_symlink_w(entry, linkname);
+		archive_entry_set_symlink_type(entry, linktype);
+	}
+	free(linkname);
+
+	return;
+}
+
+static const struct archive_vtable
+archive_read_disk_vtable = {
+	.archive_free = _archive_read_free,
+	.archive_close = _archive_read_close,
+	.archive_read_data_block = _archive_read_data_block,
+	.archive_read_next_header = _archive_read_next_header,
+	.archive_read_next_header2 = _archive_read_next_header2,
+};
+
 const char *
-archive_read_disk_gname(struct archive *_a, int64_t gid)
+archive_read_disk_gname(struct archive *_a, la_int64_t gid)
 {
 	struct archive_read_disk *a = (struct archive_read_disk *)_a;
 	if (ARCHIVE_OK != __archive_check_magic(_a, ARCHIVE_READ_DISK_MAGIC,
@@ -329,7 +489,7 @@ archive_read_disk_gname(struct archive *_a, int64_t gid)
 }
 
 const char *
-archive_read_disk_uname(struct archive *_a, int64_t uid)
+archive_read_disk_uname(struct archive *_a, la_int64_t uid)
 {
 	struct archive_read_disk *a = (struct archive_read_disk *)_a;
 	if (ARCHIVE_OK != __archive_check_magic(_a, ARCHIVE_READ_DISK_MAGIC,
@@ -343,7 +503,7 @@ archive_read_disk_uname(struct archive *_a, int64_t uid)
 int
 archive_read_disk_set_gname_lookup(struct archive *_a,
     void *private_data,
-    const char * (*lookup_gname)(void *private, int64_t gid),
+    const char * (*lookup_gname)(void *private, la_int64_t gid),
     void (*cleanup_gname)(void *private))
 {
 	struct archive_read_disk *a = (struct archive_read_disk *)_a;
@@ -386,17 +546,16 @@ archive_read_disk_new(void)
 {
 	struct archive_read_disk *a;
 
-	a = (struct archive_read_disk *)malloc(sizeof(*a));
+	a = calloc(1, sizeof(*a));
 	if (a == NULL)
 		return (NULL);
-	memset(a, 0, sizeof(*a));
 	a->archive.magic = ARCHIVE_READ_DISK_MAGIC;
 	a->archive.state = ARCHIVE_STATE_NEW;
-	a->archive.vtable = archive_read_disk_vtable();
+	a->archive.vtable = &archive_read_disk_vtable;
+	a->entry = archive_entry_new2(&a->archive);
 	a->lookup_uname = trivial_lookup_uname;
 	a->lookup_gname = trivial_lookup_gname;
-	a->enable_copyfile = 1;
-	a->traverse_mount_points = 1;
+	a->flags = ARCHIVE_READDISK_MAC_COPYFILE;
 	return (&a->archive);
 }
 
@@ -422,6 +581,7 @@ _archive_read_free(struct archive *_a)
 	if (a->cleanup_uname != NULL && a->lookup_uname_data != NULL)
 		(a->cleanup_uname)(a->lookup_uname_data);
 	archive_string_free(&a->archive.error_string);
+	archive_entry_free(a->entry);
 	a->archive.magic = 0;
 	free(a);
 	return (r);
@@ -445,7 +605,7 @@ _archive_read_close(struct archive *_a)
 
 static void
 setup_symlink_mode(struct archive_read_disk *a, char symlink_mode, 
-    int follow_symlinks)
+    char follow_symlinks)
 {
 	a->symlink_mode = symlink_mode;
 	a->follow_symlinks = follow_symlinks;
@@ -491,7 +651,7 @@ archive_read_disk_set_atime_restored(struct archive *_a)
 	struct archive_read_disk *a = (struct archive_read_disk *)_a;
 	archive_check_magic(_a, ARCHIVE_READ_DISK_MAGIC,
 	    ARCHIVE_STATE_ANY, "archive_read_disk_restore_atime");
-	a->restore_time = 1;
+	a->flags |= ARCHIVE_READDISK_RESTORE_ATIME;
 	if (a->tree != NULL)
 		a->tree->flags |= needsRestoreTimes;
 	return (ARCHIVE_OK);
@@ -506,25 +666,14 @@ archive_read_disk_set_behavior(struct archive *_a, int flags)
 	archive_check_magic(_a, ARCHIVE_READ_DISK_MAGIC,
 	    ARCHIVE_STATE_ANY, "archive_read_disk_honor_nodump");
 
+	a->flags = flags;
+
 	if (flags & ARCHIVE_READDISK_RESTORE_ATIME)
 		r = archive_read_disk_set_atime_restored(_a);
 	else {
-		a->restore_time = 0;
 		if (a->tree != NULL)
 			a->tree->flags &= ~needsRestoreTimes;
 	}
-	if (flags & ARCHIVE_READDISK_HONOR_NODUMP)
-		a->honor_nodump = 1;
-	else
-		a->honor_nodump = 0;
-	if (flags & ARCHIVE_READDISK_MAC_COPYFILE)
-		a->enable_copyfile = 1;
-	else
-		a->enable_copyfile = 0;
-	if (flags & ARCHIVE_READDISK_NO_TRAVERSE_MOUNTS)
-		a->traverse_mount_points = 0;
-	else
-		a->traverse_mount_points = 1;
 	return (r);
 }
 
@@ -575,7 +724,7 @@ start_next_async_read(struct archive_read_disk *a, struct tree *t)
 	/* Allocate read buffer. */
 	if (olp->buff == NULL) {
 		void *p;
-		size_t s = (size_t)align_num_per_sector(t, BUFFER_SIZE);
+		size_t s = (size_t)align_num_per_sector(t, READ_BUFFER_SIZE);
 		p = VirtualAlloc(NULL, s, MEM_COMMIT, PAGE_READWRITE);
 		if (p == NULL) {
 			archive_set_error(&a->archive, ENOMEM,
@@ -691,7 +840,7 @@ _archive_read_data_block(struct archive *_a, const void **buff,
 				break;
 		} while (r == ARCHIVE_OK && t->ol_num_doing < MAX_OVERLAPPED);
 	} else {
-		if (start_next_async_read(a, t) == ARCHIVE_FATAL)
+		if ((r = start_next_async_read(a, t)) == ARCHIVE_FATAL)
 			goto abort_read_data;
 	}
 
@@ -798,7 +947,7 @@ next_entry(struct archive_read_disk *a, struct tree *t,
 		r = archive_match_path_excluded(a->matching, entry);
 		if (r < 0) {
 			archive_set_error(&(a->archive), errno,
-			    "Faild : %s", archive_error_string(a->matching));
+			    "Failed : %s", archive_error_string(a->matching));
 			return (r);
 		}
 		if (r) {
@@ -848,7 +997,7 @@ next_entry(struct archive_read_disk *a, struct tree *t,
 	}
 	if (t->initial_filesystem_id == -1)
 		t->initial_filesystem_id = t->current_filesystem_id;
-	if (!a->traverse_mount_points) {
+	if (a->flags & ARCHIVE_READDISK_NO_TRAVERSE_MOUNTS) {
 		if (t->initial_filesystem_id != t->current_filesystem_id)
 			return (ARCHIVE_RETRY);
 	}
@@ -858,7 +1007,7 @@ next_entry(struct archive_read_disk *a, struct tree *t,
 
 	/* Save the times to be restored. This must be in before
 	 * calling archive_read_disk_descend() or any chance of it,
-	 * especially, invokng a callback. */
+	 * especially, invoking a callback. */
 	t->restore_time.lastWriteTime = st->ftLastWriteTime;
 	t->restore_time.lastAccessTime = st->ftLastAccessTime;
 	t->restore_time.filetype = archive_entry_filetype(entry);
@@ -870,7 +1019,7 @@ next_entry(struct archive_read_disk *a, struct tree *t,
 		r = archive_match_time_excluded(a->matching, entry);
 		if (r < 0) {
 			archive_set_error(&(a->archive), errno,
-			    "Faild : %s", archive_error_string(a->matching));
+			    "Failed : %s", archive_error_string(a->matching));
 			return (r);
 		}
 		if (r) {
@@ -896,7 +1045,7 @@ next_entry(struct archive_read_disk *a, struct tree *t,
 		r = archive_match_owner_excluded(a->matching, entry);
 		if (r < 0) {
 			archive_set_error(&(a->archive), errno,
-			    "Faild : %s", archive_error_string(a->matching));
+			    "Failed : %s", archive_error_string(a->matching));
 			return (r);
 		}
 		if (r) {
@@ -905,6 +1054,19 @@ next_entry(struct archive_read_disk *a, struct tree *t,
 				    a->excluded_cb_data, entry);
 			return (ARCHIVE_RETRY);
 		}
+	}
+
+	/*
+	 * File attributes
+	 */
+	if ((a->flags & ARCHIVE_READDISK_NO_FFLAGS) == 0) {
+		const int supported_attrs =
+		    FILE_ATTRIBUTE_READONLY |
+		    FILE_ATTRIBUTE_HIDDEN |
+		    FILE_ATTRIBUTE_SYSTEM;
+		DWORD file_attrs = st->dwFileAttributes & supported_attrs;
+		if (file_attrs != 0)
+			archive_entry_set_fflags(entry, file_attrs, 0);
 	}
 
 	/*
@@ -922,26 +1084,55 @@ next_entry(struct archive_read_disk *a, struct tree *t,
 	if (archive_entry_filetype(entry) == AE_IFREG &&
 	    archive_entry_size(entry) > 0) {
 		DWORD flags = FILE_FLAG_BACKUP_SEMANTICS;
+#if _WIN32_WINNT >= 0x0602 /* _WIN32_WINNT_WIN8 */
+		CREATEFILE2_EXTENDED_PARAMETERS createExParams;
+#endif
 		if (t->async_io)
 			flags |= FILE_FLAG_OVERLAPPED;
 		if (t->direct_io)
 			flags |= FILE_FLAG_NO_BUFFERING;
 		else
 			flags |= FILE_FLAG_SEQUENTIAL_SCAN;
+#if _WIN32_WINNT >= 0x0602 /* _WIN32_WINNT_WIN8 */
+		ZeroMemory(&createExParams, sizeof(createExParams));
+		createExParams.dwSize = sizeof(createExParams);
+		createExParams.dwFileFlags = flags;
+		t->entry_fh = CreateFile2(tree_current_access_path(t),
+		    GENERIC_READ,
+		    FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+		    OPEN_EXISTING, &createExParams);
+#else
 		t->entry_fh = CreateFileW(tree_current_access_path(t),
-		    GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, flags, NULL);
+		    GENERIC_READ,
+		    FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+		    NULL, OPEN_EXISTING, flags, NULL);
+#endif
 		if (t->entry_fh == INVALID_HANDLE_VALUE) {
+			la_dosmaperr(GetLastError());
 			archive_set_error(&a->archive, errno,
 			    "Couldn't open %ls", tree_current_path(a->tree));
 			return (ARCHIVE_FAILED);
 		}
 
 		/* Find sparse data from the disk. */
-		if (archive_entry_hardlink(entry) == NULL &&
-		    (st->dwFileAttributes & FILE_ATTRIBUTE_SPARSE_FILE) != 0)
-			r = setup_sparse_from_disk(a, entry, t->entry_fh);
+		if ((a->flags & ARCHIVE_READDISK_NO_SPARSE) == 0) {
+			if (archive_entry_hardlink(entry) == NULL &&
+			    (st->dwFileAttributes & FILE_ATTRIBUTE_SPARSE_FILE) != 0)
+				r = setup_sparse_from_disk(a, entry, t->entry_fh);
+		}
 	}
 	return (r);
+}
+
+static int
+_archive_read_next_header(struct archive *_a, struct archive_entry **entryp)
+{
+       int ret;
+       struct archive_read_disk *a = (struct archive_read_disk *)_a;
+       *entryp = NULL;
+       ret = _archive_read_next_header2(_a, a->entry);
+       *entryp = a->entry;
+       return ret;
 }
 
 static int
@@ -961,6 +1152,8 @@ _archive_read_next_header2(struct archive *_a, struct archive_entry *entry)
 		close_and_restore_time(t->entry_fh, t, &t->restore_time);
 		t->entry_fh = INVALID_HANDLE_VALUE;
 	}
+
+	archive_entry_clear(entry);
 
 	while ((r = next_entry(a, t, entry)) == ARCHIVE_RETRY)
 		archive_entry_clear(entry);
@@ -1000,6 +1193,7 @@ _archive_read_next_header2(struct archive *_a, struct archive_entry *entry)
 		break;
 	}
 
+	__archive_reset_read_data(&a->archive);
 	return (r);
 }
 
@@ -1133,7 +1327,7 @@ archive_read_disk_descend(struct archive *_a)
 	    ARCHIVE_STATE_HEADER | ARCHIVE_STATE_DATA,
 	    "archive_read_disk_descend");
 
-	if (t->visit_type != TREE_REGULAR || !t->descend)
+	if (!archive_read_disk_can_descend(_a))
 		return (ARCHIVE_OK);
 
 	if (tree_current_is_physical_dir(t)) {
@@ -1203,9 +1397,11 @@ _archive_read_disk_open_w(struct archive *_a, const wchar_t *pathname)
 	struct archive_read_disk *a = (struct archive_read_disk *)_a;
 
 	if (a->tree != NULL)
-		a->tree = tree_reopen(a->tree, pathname, a->restore_time);
+		a->tree = tree_reopen(a->tree, pathname,
+		    a->flags & ARCHIVE_READDISK_RESTORE_ATIME);
 	else
-		a->tree = tree_open(pathname, a->symlink_mode, a->restore_time);
+		a->tree = tree_open(pathname, a->symlink_mode,
+		    a->flags & ARCHIVE_READDISK_RESTORE_ATIME);
 	if (a->tree == NULL) {
 		archive_set_error(&a->archive, ENOMEM,
 		    "Can't allocate directory traversal data");
@@ -1244,7 +1440,7 @@ update_current_filesystem(struct archive_read_disk *a, int64_t dev)
 
 	for (i = 0; i < t->max_filesystem_id; i++) {
 		if (t->filesystem_table[i].dev == dev) {
-			/* There is the filesytem ID we've already generated. */
+			/* There is the filesystem ID we've already generated. */
 			t->current_filesystem_id = i;
 			t->current_filesystem = &(t->filesystem_table[i]);
 			return (ARCHIVE_OK);
@@ -1252,11 +1448,15 @@ update_current_filesystem(struct archive_read_disk *a, int64_t dev)
 	}
 
 	/*
-	 * There is a new filesytem, we generate a new ID for.
+	 * There is a new filesystem, we generate a new ID for.
 	 */
 	fid = t->max_filesystem_id++;
-	if (t->max_filesystem_id > t->allocated_filesytem) {
-		size_t s;
+	if (fid > MAX_FILESYSTEM_ID) {
+		archive_set_error(&a->archive, ENOMEM, "Too many filesystems");
+		return (ARCHIVE_FATAL);
+	}
+	if (t->max_filesystem_id > t->allocated_filesystem) {
+		int s;
 		void *p;
 
 		s = t->max_filesystem_id * 2;
@@ -1268,7 +1468,7 @@ update_current_filesystem(struct archive_read_disk *a, int64_t dev)
 			return (ARCHIVE_FATAL);
 		}
 		t->filesystem_table = (struct filesystem *)p;
-		t->allocated_filesytem = (int)s;
+		t->allocated_filesystem = (int)s;
 	}
 	t->current_filesystem_id = fid;
 	t->current_filesystem = &(t->filesystem_table[fid]);
@@ -1381,11 +1581,14 @@ close_and_restore_time(HANDLE h, struct tree *t, struct restore_time *rt)
 {
 	HANDLE handle;
 	int r = 0;
+#if _WIN32_WINNT >= 0x0602 /* _WIN32_WINNT_WIN8 */
+	CREATEFILE2_EXTENDED_PARAMETERS createExParams;
+#endif
 
 	if (h == INVALID_HANDLE_VALUE && AE_IFLNK == rt->filetype)
 		return (0);
 
-	/* Close a file descritor.
+	/* Close a file descriptor.
 	 * It will not be used for SetFileTime() because it has been opened
 	 * by a read only mode.
 	 */
@@ -1394,8 +1597,16 @@ close_and_restore_time(HANDLE h, struct tree *t, struct restore_time *rt)
 	if ((t->flags & needsRestoreTimes) == 0)
 		return (r);
 
+#if _WIN32_WINNT >= 0x0602 /* _WIN32_WINNT_WIN8 */
+	ZeroMemory(&createExParams, sizeof(createExParams));
+	createExParams.dwSize = sizeof(createExParams);
+	createExParams.dwFileFlags = FILE_FLAG_BACKUP_SEMANTICS;
+	handle = CreateFile2(rt->full_path, FILE_WRITE_ATTRIBUTES,
+		    0, OPEN_EXISTING, &createExParams);
+#else
 	handle = CreateFileW(rt->full_path, FILE_WRITE_ATTRIBUTES,
 		    0, NULL, OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS, NULL);
+#endif
 	if (handle == INVALID_HANDLE_VALUE) {
 		errno = EINVAL;
 		return (-1);
@@ -1420,8 +1631,7 @@ tree_push(struct tree *t, const wchar_t *path, const wchar_t *full_path,
 {
 	struct tree_entry *te;
 
-	te = malloc(sizeof(*te));
-	memset(te, 0, sizeof(*te));
+	te = calloc(1, sizeof(*te));
 	te->next = t->stack;
 	te->parent = t->current;
 	if (te->parent)
@@ -1448,7 +1658,7 @@ tree_push(struct tree *t, const wchar_t *path, const wchar_t *full_path,
 /*
  * Append a name to the current dir path.
  */
-static void
+static int
 tree_append(struct tree *t, const wchar_t *name, size_t name_length)
 {
 	size_t size_needed;
@@ -1461,7 +1671,8 @@ tree_append(struct tree *t, const wchar_t *name, size_t name_length)
 
 	/* Resize pathname buffer as needed. */
 	size_needed = name_length + t->dirname_length + 2;
-	archive_wstring_ensure(&t->path, size_needed);
+	if (archive_wstring_ensure(&t->path, size_needed) == NULL)
+		return (TREE_ERROR_FATAL);
 	/* Add a separating '/' if it's needed. */
 	if (t->dirname_length > 0 &&
 	    t->path.s[archive_strlen(&t->path)-1] != L'/')
@@ -1473,13 +1684,15 @@ tree_append(struct tree *t, const wchar_t *name, size_t name_length)
 		t->full_path.s[t->full_path_dir_length] = L'\0';
 		t->full_path.length = t->full_path_dir_length;
 		size_needed = name_length + t->full_path_dir_length + 2;
-		archive_wstring_ensure(&t->full_path, size_needed);
+		if (archive_wstring_ensure(&t->full_path, size_needed) == NULL)
+			return (TREE_ERROR_FATAL);
 		/* Add a separating '\' if it's needed. */
 		if (t->full_path.s[archive_strlen(&t->full_path)-1] != L'\\')
 			archive_wstrappend_wchar(&t->full_path, L'\\');
 		archive_wstrncat(&t->full_path, name, name_length);
 		t->restore_time.full_path = t->full_path.s;
 	}
+	return (0);
 }
 
 /*
@@ -1490,11 +1703,13 @@ tree_open(const wchar_t *path, int symlink_mode, int restore_time)
 {
 	struct tree *t;
 
-	t = malloc(sizeof(*t));
-	memset(t, 0, sizeof(*t));
+	t = calloc(1, sizeof(*t));
 	archive_string_init(&(t->full_path));
 	archive_string_init(&t->path);
-	archive_wstring_ensure(&t->path, 15);
+	if (archive_wstring_ensure(&t->path, 15) == NULL) {
+		free(t);
+		return (NULL);
+	}
 	t->initial_symlink_mode = symlink_mode;
 	return (tree_reopen(t, path, restore_time));
 }
@@ -1505,7 +1720,7 @@ tree_reopen(struct tree *t, const wchar_t *path, int restore_time)
 	struct archive_wstring ws;
 	wchar_t *pathname, *p, *base;
 
-	t->flags = (restore_time)?needsRestoreTimes:0;
+	t->flags = (restore_time != 0)?needsRestoreTimes:0;
 	t->visit_type = 0;
 	t->tree_errno = 0;
 	t->full_path_dir_length = 0;
@@ -1553,7 +1768,8 @@ tree_reopen(struct tree *t, const wchar_t *path, int restore_time)
 		p = wcsrchr(base, L'/');
 		if (p != NULL) {
 			*p = L'\0';
-			tree_append(t, base, p - base);
+			if (tree_append(t, base, p - base))
+				goto failed;
 			t->dirname_length = archive_strlen(&t->path);
 			base = p + 1;
 		}
@@ -1569,7 +1785,7 @@ tree_reopen(struct tree *t, const wchar_t *path, int restore_time)
 	t->stack->flags = needsFirstVisit;
 	/*
 	 * Debug flag for Direct IO(No buffering) or Async IO.
-	 * Those dependant on environment variable switches
+	 * Those dependent on environment variable switches
 	 * will be removed until next release.
 	 */
 	{
@@ -1677,7 +1893,7 @@ tree_next(struct tree *t)
 					continue;
 				return (r);
 			} else {
-				HANDLE h = FindFirstFileW(d, &t->_findData);
+				HANDLE h = FindFirstFileW(t->stack->full_path.s, &t->_findData);
 				if (h == INVALID_HANDLE_VALUE) {
 					la_dosmaperr(GetLastError());
 					t->tree_errno = errno;
@@ -1689,8 +1905,10 @@ tree_next(struct tree *t)
 			}
 			/* Top stack item needs a regular visit. */
 			t->current = t->stack;
-			tree_append(t, t->stack->name.s,
+			r = tree_append(t, t->stack->name.s,
 			    archive_strlen(&(t->stack->name)));
+			if (r != 0)
+				return (r);
 			//t->dirname_length = t->path_length;
 			//tree_pop(t);
 			t->stack->flags &= ~needsFirstVisit;
@@ -1698,8 +1916,10 @@ tree_next(struct tree *t)
 		} else if (t->stack->flags & needsDescent) {
 			/* Top stack item is dir to descend into. */
 			t->current = t->stack;
-			tree_append(t, t->stack->name.s,
+			r = tree_append(t, t->stack->name.s,
 			    archive_strlen(&(t->stack->name)));
+			if (r != 0)
+				return (r);
 			t->stack->flags &= ~needsDescent;
 			r = tree_descent(t);
 			if (r != 0) {
@@ -1742,9 +1962,10 @@ tree_dir_next_windows(struct tree *t, const wchar_t *pattern)
 			struct archive_wstring pt;
 
 			archive_string_init(&pt);
-			archive_wstring_ensure(&pt,
+			if (archive_wstring_ensure(&pt,
 			    archive_strlen(&(t->full_path))
-			      + 2 + wcslen(pattern));
+			      + 2 + wcslen(pattern)) == NULL)
+				return (TREE_ERROR_FATAL);
 			archive_wstring_copy(&pt, &(t->full_path));
 			archive_wstrappend_wchar(&pt, L'\\');
 			archive_wstrcat(&pt, pattern);
@@ -1758,6 +1979,8 @@ tree_dir_next_windows(struct tree *t, const wchar_t *pattern)
 				t->visit_type = r != 0 ? r : TREE_ERROR_DIR;
 				return (t->visit_type);
 			}
+			/* Top stack item needs a regular visit. */
+			t->current = t->stack;
 			t->findData = &t->_findData;
 			pattern = NULL;
 		} else if (!FindNextFileW(t->d, &t->_findData)) {
@@ -1774,28 +1997,10 @@ tree_dir_next_windows(struct tree *t, const wchar_t *pattern)
 			continue;
 		if (name[0] == L'.' && name[1] == L'.' && name[2] == L'\0')
 			continue;
-		tree_append(t, name, namelen);
+		r = tree_append(t, name, namelen);
+		if (r != 0)
+			return (r);
 		return (t->visit_type = TREE_REGULAR);
-	}
-}
-
-#define EPOC_TIME ARCHIVE_LITERAL_ULL(116444736000000000)
-static void
-fileTimeToUtc(const FILETIME *filetime, time_t *t, long *ns)
-{
-	ULARGE_INTEGER utc;
-
-	utc.HighPart = filetime->dwHighDateTime;
-	utc.LowPart  = filetime->dwLowDateTime;
-	if (utc.QuadPart >= EPOC_TIME) {
-		utc.QuadPart -= EPOC_TIME;
-		/* milli seconds base */
-		*t = (time_t)(utc.QuadPart / 10000000);
-		/* nano seconds base */
-		*ns = (long)(utc.QuadPart % 10000000) * 100;
-	} else {
-		*t = 0;
-		*ns = 0;
 	}
 }
 
@@ -1804,15 +2009,15 @@ entry_copy_bhfi(struct archive_entry *entry, const wchar_t *path,
 	const WIN32_FIND_DATAW *findData,
 	const BY_HANDLE_FILE_INFORMATION *bhfi)
 {
-	time_t secs;
-	long nsecs;
+	int64_t secs;
+	uint32_t nsecs;
 	mode_t mode;
 
-	fileTimeToUtc(&bhfi->ftLastAccessTime, &secs, &nsecs);
+	ntfs_to_unix(FILETIME_to_ntfs(&bhfi->ftLastAccessTime), &secs, &nsecs);
 	archive_entry_set_atime(entry, secs, nsecs);
-	fileTimeToUtc(&bhfi->ftLastWriteTime, &secs, &nsecs);
+	ntfs_to_unix(FILETIME_to_ntfs(&bhfi->ftLastWriteTime), &secs, &nsecs);
 	archive_entry_set_mtime(entry, secs, nsecs);
-	fileTimeToUtc(&bhfi->ftCreationTime, &secs, &nsecs);
+	ntfs_to_unix(FILETIME_to_ntfs(&bhfi->ftCreationTime), &secs, &nsecs);
 	archive_entry_set_birthtime(entry, secs, nsecs);
 	archive_entry_set_ctime(entry, secs, nsecs);
 	archive_entry_set_dev(entry, bhfi_dev(bhfi));
@@ -1833,9 +2038,10 @@ entry_copy_bhfi(struct archive_entry *entry, const wchar_t *path,
 		mode |= S_IWUSR | S_IWGRP | S_IWOTH;
 	if ((bhfi->dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) &&
 	    findData != NULL &&
-	    findData->dwReserved0 == IO_REPARSE_TAG_SYMLINK)
+	    findData->dwReserved0 == IO_REPARSE_TAG_SYMLINK) {
 		mode |= S_IFLNK;
-	else if (bhfi->dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)
+		entry_symlink_from_pathw(entry, path);
+	} else if (bhfi->dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)
 		mode |= S_IFDIR | S_IXUSR | S_IXGRP | S_IXOTH;
 	else {
 		const wchar_t *p;
@@ -1881,11 +2087,24 @@ tree_current_file_information(struct tree *t, BY_HANDLE_FILE_INFORMATION *st,
 	HANDLE h;
 	int r;
 	DWORD flag = FILE_FLAG_BACKUP_SEMANTICS;
-	
+# if _WIN32_WINNT >= 0x0602 /* _WIN32_WINNT_WIN8 */
+	CREATEFILE2_EXTENDED_PARAMETERS createExParams;
+#endif
+
 	if (sim_lstat && tree_current_is_physical_link(t))
 		flag |= FILE_FLAG_OPEN_REPARSE_POINT;
-	h = CreateFileW(tree_current_access_path(t), 0, FILE_SHARE_READ, NULL,
+# if _WIN32_WINNT >= 0x0602 /* _WIN32_WINNT_WIN8 */
+	ZeroMemory(&createExParams, sizeof(createExParams));
+	createExParams.dwSize = sizeof(createExParams);
+	createExParams.dwFileFlags = flag;
+	h = CreateFile2(tree_current_access_path(t), 0,
+	    FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+	    OPEN_EXISTING, &createExParams);
+#else
+	h = CreateFileW(tree_current_access_path(t), 0,
+	    FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, NULL,
 	    OPEN_EXISTING, flag, NULL);
+#endif
 	if (h == INVALID_HANDLE_VALUE) {
 		la_dosmaperr(GetLastError());
 		t->tree_errno = errno;
@@ -2091,7 +2310,10 @@ archive_read_disk_entry_from_file(struct archive *_a,
 		} else {
 			WIN32_FIND_DATAW findData;
 			DWORD flag, desiredAccess;
-	
+# if _WIN32_WINNT >= 0x0602 /* _WIN32_WINNT_WIN8 */
+			CREATEFILE2_EXTENDED_PARAMETERS createExParams;
+#endif
+
 			h = FindFirstFileW(path, &findData);
 			if (h == INVALID_HANDLE_VALUE) {
 				la_dosmaperr(GetLastError());
@@ -2113,8 +2335,18 @@ archive_read_disk_entry_from_file(struct archive *_a,
 			} else
 				desiredAccess = GENERIC_READ;
 
-			h = CreateFileW(path, desiredAccess, FILE_SHARE_READ, NULL,
+# if _WIN32_WINNT >= 0x0602 /* _WIN32_WINNT_WIN8 */
+			ZeroMemory(&createExParams, sizeof(createExParams));
+			createExParams.dwSize = sizeof(createExParams);
+			createExParams.dwFileFlags = flag;
+			h = CreateFile2(path, desiredAccess,
+			    FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+			    OPEN_EXISTING, &createExParams);
+#else
+			h = CreateFileW(path, desiredAccess,
+			    FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, NULL,
 			    OPEN_EXISTING, flag, NULL);
+#endif
 			if (h == INVALID_HANDLE_VALUE) {
 				la_dosmaperr(GetLastError());
 				archive_set_error(&a->archive, errno,
@@ -2134,6 +2366,8 @@ archive_read_disk_entry_from_file(struct archive *_a,
 		fileAttributes = bhfi.dwFileAttributes;
 	} else {
 		archive_entry_copy_stat(entry, st);
+		if (st->st_mode & S_IFLNK)
+			entry_symlink_from_pathw(entry, path);
 		h = INVALID_HANDLE_VALUE;
 	}
 
@@ -2144,6 +2378,19 @@ archive_read_disk_entry_from_file(struct archive *_a,
 	name = archive_read_disk_gname(_a, archive_entry_gid(entry));
 	if (name != NULL)
 		archive_entry_copy_gname(entry, name);
+
+	/*
+	 * File attributes
+	 */
+	if ((a->flags & ARCHIVE_READDISK_NO_FFLAGS) == 0) {
+		const int supported_attrs =
+		    FILE_ATTRIBUTE_READONLY |
+		    FILE_ATTRIBUTE_HIDDEN |
+		    FILE_ATTRIBUTE_SYSTEM;
+		DWORD file_attrs = fileAttributes & supported_attrs;
+		if (file_attrs != 0)
+			archive_entry_set_fflags(entry, file_attrs, 0);
+	}
 
 	/*
 	 * Can this file be sparse file ?
@@ -2160,8 +2407,19 @@ archive_read_disk_entry_from_file(struct archive *_a,
 		if (fd >= 0) {
 			h = (HANDLE)_get_osfhandle(fd);
 		} else {
-			h = CreateFileW(path, GENERIC_READ, FILE_SHARE_READ, NULL,
+# if _WIN32_WINNT >= 0x0602 /* _WIN32_WINNT_WIN8 */
+			CREATEFILE2_EXTENDED_PARAMETERS createExParams;
+			ZeroMemory(&createExParams, sizeof(createExParams));
+			createExParams.dwSize = sizeof(createExParams);
+			createExParams.dwFileFlags = FILE_FLAG_BACKUP_SEMANTICS;
+			h = CreateFile2(path, GENERIC_READ,
+			    FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+			    OPEN_EXISTING, &createExParams);
+#else
+			h = CreateFileW(path, GENERIC_READ,
+			    FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, NULL,
 			    OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS, NULL);
+#endif
 			if (h == INVALID_HANDLE_VALUE) {
 				la_dosmaperr(GetLastError());
 				archive_set_error(&a->archive, errno,
@@ -2188,9 +2446,12 @@ archive_read_disk_entry_from_file(struct archive *_a,
 		return (ARCHIVE_OK);
 	}
 
-	r = setup_sparse_from_disk(a, entry, h);
-	if (fd < 0)
-		CloseHandle(h);
+	r = ARCHIVE_OK;
+	if ((a->flags & ARCHIVE_READDISK_NO_SPARSE) == 0) {
+		r = setup_sparse_from_disk(a, entry, h);
+		if (fd < 0)
+			CloseHandle(h);
+	}
 
 	return (r);
 }
@@ -2218,7 +2479,7 @@ setup_sparse_from_disk(struct archive_read_disk *a,
 	range.FileOffset.QuadPart = 0;
 	range.Length.QuadPart = entry_size;
 	outranges_size = 2048;
-	outranges = (FILE_ALLOCATED_RANGE_BUFFER *)malloc(outranges_size);
+	outranges = malloc(outranges_size);
 	if (outranges == NULL) {
 		archive_set_error(&a->archive, ENOMEM,
 			"Couldn't allocate memory");
@@ -2271,10 +2532,10 @@ setup_sparse_from_disk(struct archive_read_disk *a,
 				if (range.Length.QuadPart > 0)
 					continue;
 			} else {
-				/* The remaining data is hole. */
+				/* The entire file is a hole. Add one data block of size 0 at the end. */
 				archive_entry_sparse_add_entry(entry,
-				    range.FileOffset.QuadPart,
-				    range.Length.QuadPart);
+				    entry_size,
+				    0);
 			}
 			break;
 		} else {

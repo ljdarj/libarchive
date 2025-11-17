@@ -1,3 +1,6 @@
+#
+# SPDX-License-Identifier: BSD-2-Clause
+#
 ############################################
 #
 # How to build bsdtar_test
@@ -6,11 +9,12 @@
 IF(ENABLE_TAR AND ENABLE_TEST)
   SET(bsdtar_test_SOURCES
     ../../test_utils/test_utils.c
-    main.c
+    ../../test_utils/test_main.c
     test.h
     test_0.c
     test_basic.c
     test_copy.c
+    test_crlf_mtree.c
     test_empty_mtree.c
     test_extract_tar_Z.c
     test_extract_tar_bz2.c
@@ -22,21 +26,32 @@ IF(ENABLE_TAR AND ENABLE_TEST)
     test_extract_tar_lzma.c
     test_extract_tar_lzo.c
     test_extract_tar_xz.c
+    test_extract_tar_zstd.c
     test_format_newc.c
     test_help.c
+    test_leading_slash.c
+    test_list_item.c
+    test_missing_file.c
     test_option_C_upper.c
+    test_option_C_mtree.c
     test_option_H_upper.c
     test_option_L_upper.c
     test_option_O_upper.c
+    test_option_P_upper.c
     test_option_T_upper.c
     test_option_U_upper.c
     test_option_X_upper.c
     test_option_a.c
+    test_option_acls.c
     test_option_b.c
     test_option_b64encode.c
     test_option_exclude.c
+    test_option_exclude_vcs.c
+    test_option_fflags.c
     test_option_gid_gname.c
+    test_option_group.c
     test_option_grzip.c
+    test_option_ignore_zeros.c
     test_option_j.c
     test_option_k.c
     test_option_keep_newer_files.c
@@ -44,18 +59,23 @@ IF(ENABLE_TAR AND ENABLE_TEST)
     test_option_lz4.c
     test_option_lzma.c
     test_option_lzop.c
+    test_option_mtime.c
     test_option_n.c
     test_option_newer_than.c
     test_option_nodump.c
     test_option_older_than.c
+    test_option_owner.c
     test_option_passphrase.c
     test_option_q.c
     test_option_r.c
     test_option_s.c
+    test_option_safe_writes.c
     test_option_uid_uname.c
     test_option_uuencode.c
+    test_option_xattrs.c
     test_option_xz.c
     test_option_z.c
+    test_option_zstd.c
     test_patterns.c
     test_print_longpath.c
     test_stdio.c
@@ -69,6 +89,16 @@ IF(ENABLE_TAR AND ENABLE_TEST)
   # Register target
   #
   ADD_EXECUTABLE(bsdtar_test ${bsdtar_test_SOURCES})
+  IF(ENABLE_ACL)
+    SET(TEST_ACL_LIBS "")
+    IF(HAVE_LIBACL)
+      LIST(APPEND TEST_ACL_LIBS ${ACL_LIBRARY})
+    ENDIF(HAVE_LIBACL)
+    IF(HAVE_LIBRICHACL)
+      LIST(APPEND TEST_ACL_LIBS ${RICHACL_LIBRARY})
+    ENDIF(HAVE_LIBRICHACL)
+    TARGET_LINK_LIBRARIES(bsdtar_test ${TEST_ACL_LIBS})
+  ENDIF(ENABLE_ACL)
   SET_PROPERTY(TARGET bsdtar_test PROPERTY COMPILE_DEFINITIONS LIST_H)
 
   #
@@ -88,16 +118,21 @@ IF(ENABLE_TAR AND ENABLE_TEST)
       COMMAND bsdtar_test -vv
                           -p $<TARGET_FILE:bsdtar>
                           -r ${CMAKE_CURRENT_SOURCE_DIR}
+                          -s
                           ${_testname})
+    SET_TESTS_PROPERTIES(bsdtar_${_testname} PROPERTIES SKIP_RETURN_CODE 2)
   ENDMACRO (DEFINE_TEST _testname)
 
   INCLUDE(${CMAKE_CURRENT_BINARY_DIR}/list.h)
   INCLUDE_DIRECTORIES(${CMAKE_CURRENT_BINARY_DIR})
   INCLUDE_DIRECTORIES(${PROJECT_SOURCE_DIR}/test_utils)
+  INCLUDE_DIRECTORIES(${PROJECT_SOURCE_DIR}/tar/test)
 
   # Experimental new test handling
   ADD_CUSTOM_TARGET(run_bsdtar_test
-	COMMAND	bsdtar_test -p ${BSDTAR} -r ${CMAKE_CURRENT_SOURCE_DIR})
+	COMMAND	bsdtar_test -p $<TARGET_FILE:bsdtar>
+			    -r ${CMAKE_CURRENT_SOURCE_DIR}
+			    -vv)
   ADD_DEPENDENCIES(run_bsdtar_test bsdtar)
   ADD_DEPENDENCIES(run_all_tests run_bsdtar_test)
 

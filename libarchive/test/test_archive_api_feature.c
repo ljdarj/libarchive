@@ -23,7 +23,6 @@
  * THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 #include "test.h"
-__FBSDID("$FreeBSD: src/lib/libarchive/test/test_archive_api_feature.c,v 1.5 2008/05/26 17:00:24 kientzle Exp $");
 
 DEFINE_TEST(test_archive_api_feature)
 {
@@ -32,7 +31,7 @@ DEFINE_TEST(test_archive_api_feature)
 
 	/* This is the (hopefully) final versioning API. */
 	assertEqualInt(ARCHIVE_VERSION_NUMBER, archive_version_number());
-	sprintf(buff, "libarchive %d.%d.%d",
+	snprintf(buff, sizeof(buff), "libarchive %d.%d.%d",
 	    archive_version_number() / 1000000,
 	    (archive_version_number() / 1000) % 1000,
 	    archive_version_number() % 1000);
@@ -42,8 +41,12 @@ DEFINE_TEST(test_archive_api_feature)
 	if (strlen(buff) < strlen(archive_version_string())) {
 		p = archive_version_string() + strlen(buff);
 		failure("Version string is: %s", archive_version_string());
-		assert(*p == 'a' || *p == 'b' || *p == 'c' || *p == 'd');
-		++p;
+		if (p[0] == 'd'&& p[1] == 'e' && p[2] == 'v')
+			p += 3;
+		else {
+			assert(*p == 'a' || *p == 'b' || *p == 'c' || *p == 'd');
+			++p;
+		}
 		failure("Version string is: %s", archive_version_string());
 		assert(*p == '\0');
 	}

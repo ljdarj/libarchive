@@ -23,7 +23,6 @@
  * THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 #include "test.h"
-__FBSDID("$FreeBSD$");
 
 static char buff2[64];
 
@@ -94,6 +93,29 @@ static const char *longhardlinkname = "Yabcdefghijklmnopqrstuvwxyz"
     "12345678901234567890123456789012345678901234567890"
     "12345678901234567890123456789012345678901234567890";
 
+static const char *longfilename_largeuid = "large_uid_gid---"
+    "12345678901234567890123456789012345678901234567890"
+    "12345678901234567890123456789012345678901234567890"
+    "12345678901234567890123456789012345678901234567890"
+    "12345678901234567890123456789012345678901234567890"
+    "12345678901234567890123456789012345678901234567890"
+    "12345678901234567890123456789012345678901234567890"
+    "12345678901234567890123456789012345678901234567890"
+    "12345678901234567890123456789012345678901234567890"
+    "12345678901234567890123456789012345678901234567890"
+    "12345678901234567890123456789012345678901234567890"
+    "12345678901234567890123456789012345678901234567890"
+    "12345678901234567890123456789012345678901234567890"
+    "12345678901234567890123456789012345678901234567890"
+    "12345678901234567890123456789012345678901234567890"
+    "12345678901234567890123456789012345678901234567890"
+    "12345678901234567890123456789012345678901234567890"
+    "12345678901234567890123456789012345678901234567890"
+    "12345678901234567890123456789012345678901234567890"
+    "12345678901234567890123456789012345678901234567890"
+    "12345678901234567890123456789012345678901234567890";
+
+
 
 DEFINE_TEST(test_write_format_gnutar)
 {
@@ -159,6 +181,19 @@ DEFINE_TEST(test_write_format_gnutar)
 	assertEqualIntA(a, ARCHIVE_OK, archive_write_header(a, ae));
 	archive_entry_free(ae);
 
+	/*
+	 * A file with large UID/GID that overflow octal encoding.
+	 */
+	assert((ae = archive_entry_new()) != NULL);
+	archive_entry_copy_pathname(ae, longfilename_largeuid);
+	archive_entry_set_mode(ae, S_IFREG | 0755);
+	archive_entry_set_size(ae, 8);
+	archive_entry_set_uid(ae, 123456789);
+	archive_entry_set_gid(ae, 987654321);
+	assertEqualIntA(a, ARCHIVE_OK, archive_write_header(a, ae));
+	archive_entry_free(ae);
+	assertEqualIntA(a, 8, archive_write_data(a, "abcdefgh", 9));
+
 	/* TODO: support GNU tar sparse format and test it here. */
 	/* See test_write_format_pax for an example of testing sparse files. */
 
@@ -173,7 +208,7 @@ DEFINE_TEST(test_write_format_gnutar)
 	/* Verify GNU tar magic/version fields */
 	assertEqualMem(buff + 257, "ustar  \0", 8);
 
-	assertEqualInt(14336, used);
+	assertEqualInt(16896, used);
 
 	/*
 	 *
@@ -224,6 +259,15 @@ DEFINE_TEST(test_write_format_gnutar)
 	assertEqualString(longlinkname, archive_entry_pathname(ae));
 	assertEqualString(longfilename, archive_entry_symlink(ae));
 	assertEqualInt(AE_IFLNK | 0755, archive_entry_mode(ae));
+
+	/*
+	 * Read file with large UID/GID.
+	 */
+	assertEqualIntA(a, 0, archive_read_next_header(a, &ae));
+	assertEqualInt(123456789, archive_entry_uid(ae));
+	assertEqualInt(987654321, archive_entry_gid(ae));
+	assertEqualString(longfilename_largeuid, archive_entry_pathname(ae));
+	assertEqualInt(S_IFREG | 0755, archive_entry_mode(ae));
 
 	/*
 	 * Verify the end of the archive.

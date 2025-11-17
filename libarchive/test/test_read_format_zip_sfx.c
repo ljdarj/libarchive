@@ -23,7 +23,6 @@
  * THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 #include "test.h"
-__FBSDID("$FreeBSD$");
 
 /*
  * Read a zip file that is a SFX. 
@@ -37,7 +36,7 @@ DEFINE_TEST(test_read_format_zip_sfx)
 	struct archive_entry *ae;
 
 	extract_reference_file(refname);
-	p = slurpfile(&s, refname);
+	p = slurpfile(&s, "%s", refname);
 
 	/* Symlinks can only be extracted with the seeking reader. */
 	assert((a = archive_read_new()) != NULL);
@@ -60,4 +59,6 @@ DEFINE_TEST(test_read_format_zip_sfx)
 	assertEqualIntA(a, ARCHIVE_EOF, archive_read_next_header(a, &ae));
 	assertEqualIntA(a, ARCHIVE_OK, archive_read_close(a));
 	assertEqualIntA(a, ARCHIVE_OK, archive_read_free(a));
+
+	free(p);
 }

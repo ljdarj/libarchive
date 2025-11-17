@@ -24,7 +24,6 @@
  */
 
 #include "archive_platform.h"
-__FBSDID("$FreeBSD$");
 
 #ifdef HAVE_STDLIB_H
 #include <stdlib.h>
@@ -51,16 +50,25 @@ __FBSDID("$FreeBSD$");
 #include <pthread.h>
 #endif
 
-#if defined(HAVE_WINCRYPT_H) && !defined(__CYGWIN__)
-#include <wincrypt.h>
-#endif
-
-static void arc4random_buf(void *, size_t);
+static void la_arc4random_buf(void *, size_t);
 
 #endif /* HAVE_ARC4RANDOM_BUF */
 
 #include "archive.h"
 #include "archive_random_private.h"
+
+#if defined(_WIN32) && !defined(__CYGWIN__) && defined(HAVE_BCRYPT_H)
+#include <bcrypt.h>
+
+/* Common in other bcrypt implementations, but missing from VS2008. */
+#ifndef BCRYPT_SUCCESS
+#define BCRYPT_SUCCESS(r) ((NTSTATUS)(r) == STATUS_SUCCESS)
+#endif
+#endif
+
+#ifndef O_CLOEXEC
+#define O_CLOEXEC	0
+#endif
 
 /*
  * Random number generator function.
@@ -71,23 +79,21 @@ int
 archive_random(void *buf, size_t nbytes)
 {
 #if defined(_WIN32) && !defined(__CYGWIN__)
-	HCRYPTPROV hProv;
-	BOOL success;
+	NTSTATUS status;
+	BCRYPT_ALG_HANDLE hAlg;
 
-	success = CryptAcquireContext(&hProv, NULL, NULL, PROV_RSA_FULL,
-	    CRYPT_VERIFYCONTEXT);
-	if (!success && GetLastError() == NTE_BAD_KEYSET) {
-		success = CryptAcquireContext(&hProv, NULL, NULL,
-		    PROV_RSA_FULL, CRYPT_NEWKEYSET);
-	}
-	if (success) {
-		success = CryptGenRandom(hProv, (DWORD)nbytes, (BYTE*)buf))
-		CryptReleaseContext(hProv, 0);
-		if (success)
-			return ARCHIVE_OK;
-	}
-	/* TODO: Does this case really happen? */
-	return ARCHIVE_FAILED;
+	status = BCryptOpenAlgorithmProvider(&hAlg, BCRYPT_RNG_ALGORITHM, NULL, 0);
+	if (!BCRYPT_SUCCESS(status))
+		return ARCHIVE_FAILED;
+	status = BCryptGenRandom(hAlg, buf, (ULONG)nbytes, 0);
+	BCryptCloseAlgorithmProvider(hAlg, 0);
+	if (!BCRYPT_SUCCESS(status))
+		return ARCHIVE_FAILED;
+
+	return ARCHIVE_OK;
+#elif !defined(HAVE_ARC4RANDOM_BUF) && (!defined(_WIN32) || defined(__CYGWIN__))
+	la_arc4random_buf(buf, nbytes);
+	return ARCHIVE_OK;
 #else
 	arc4random_buf(buf, nbytes);
 	return ARCHIVE_OK;
@@ -133,16 +139,15 @@ archive_random(void *buf, size_t nbytes)
 #endif				/* !__GNUC__ */
 
 struct arc4_stream {
-	u_int8_t i;
-	u_int8_t j;
-	u_int8_t s[256];
+	uint8_t i;
+	uint8_t j;
+	uint8_t s[256];
 };
-
-static pthread_mutex_t	arc4random_mtx = PTHREAD_MUTEX_INITIALIZER;
 
 #define	RANDOMDEV	"/dev/urandom"
 #define	KEYSIZE		128
 #ifdef HAVE_PTHREAD_H
+static pthread_mutex_t	arc4random_mtx = PTHREAD_MUTEX_INITIALIZER;
 #define	_ARC4_LOCK()	pthread_mutex_lock(&arc4random_mtx);
 #define	_ARC4_UNLOCK()  pthread_mutex_unlock(&arc4random_mtx);
 #else
@@ -155,7 +160,7 @@ static struct arc4_stream rs;
 static pid_t arc4_stir_pid;
 static int arc4_count;
 
-static inline u_int8_t arc4_getbyte(void);
+static inline uint8_t arc4_getbyte(void);
 static void arc4_stir(void);
 
 static inline void
@@ -170,10 +175,10 @@ arc4_init(void)
 }
 
 static inline void
-arc4_addrandom(u_char *dat, int datlen)
+arc4_addrandom(uint8_t *dat, int datlen)
 {
 	int     n;
-	u_int8_t si;
+	uint8_t si;
 
 	rs.i--;
 	for (n = 0; n < 256; n++) {
@@ -193,7 +198,7 @@ arc4_stir(void)
 	struct {
 		struct timeval	tv;
 		pid_t		pid;
-		u_char	 	rnd[KEYSIZE];
+		uint8_t		rnd[KEYSIZE];
 	} rdat;
 
 	if (!rs_initialized) {
@@ -213,13 +218,16 @@ arc4_stir(void)
 		/* We'll just take whatever was on the stack too... */
 	}
 
-	arc4_addrandom((u_char *)&rdat, KEYSIZE);
+	arc4_addrandom((uint8_t *)&rdat, KEYSIZE);
 
 	/*
 	 * Discard early keystream, as per recommendations in:
 	 * "(Not So) Random Shuffles of RC4" by Ilya Mironov.
+	 * As per the Network Operations Division, cryptographic requirements
+	 * published on wikileaks on March 2017.
 	 */
-	for (i = 0; i < 1024; i++)
+
+	for (i = 0; i < 3072; i++)
 		(void)arc4_getbyte();
 	arc4_count = 1600000;
 }
@@ -235,10 +243,10 @@ arc4_stir_if_needed(void)
 	}
 }
 
-static inline u_int8_t
+static inline uint8_t
 arc4_getbyte(void)
 {
-	u_int8_t si, sj;
+	uint8_t si, sj;
 
 	rs.i = (rs.i + 1);
 	si = rs.s[rs.i];
@@ -250,9 +258,9 @@ arc4_getbyte(void)
 }
 
 static void
-arc4random_buf(void *_buf, size_t n)
+la_arc4random_buf(void *_buf, size_t n)
 {
-	u_char *buf = (u_char *)_buf;
+	uint8_t *buf = (uint8_t *)_buf;
 	_ARC4_LOCK();
 	arc4_stir_if_needed();
 	while (n--) {

@@ -24,7 +24,6 @@
  */
 
 #include "archive_platform.h"
-__FBSDID("$FreeBSD$");
 
 #ifdef HAVE_ERRNO_H
 #include <errno.h>
@@ -89,9 +88,17 @@ archive_read_append_filter(struct archive *_a, int code)
       strcpy(str, "lz4");
       r1 = archive_read_support_filter_lz4(_a);
       break;
+    case ARCHIVE_FILTER_ZSTD:
+      strcpy(str, "zstd");
+      r1 = archive_read_support_filter_zstd(_a);
+      break;
     case ARCHIVE_FILTER_LZIP:
       strcpy(str, "lzip");
       r1 = archive_read_support_filter_lzip(_a);
+      break;
+    case ARCHIVE_FILTER_LZOP:
+      strcpy(str, "lzop");
+      r1 = archive_read_support_filter_lzop(_a);
       break;
     case ARCHIVE_FILTER_LRZIP:
       strcpy(str, "lrzip");
@@ -108,7 +115,7 @@ archive_read_append_filter(struct archive *_a, int code)
     number_bidders = sizeof(a->bidders) / sizeof(a->bidders[0]);
 
     bidder = a->bidders;
-    for (i = 0; i < number_bidders; i++, bidder++)
+    for (i = 1; i < number_bidders; i++, bidder++)
     {
       if (!bidder->name || !strcmp(bidder->name, str))
         break;
@@ -120,8 +127,7 @@ archive_read_append_filter(struct archive *_a, int code)
       return (ARCHIVE_FATAL);
     }
 
-    filter
-        = (struct archive_read_filter *)calloc(1, sizeof(*filter));
+    filter = calloc(1, sizeof(*filter));
     if (filter == NULL)
     {
       archive_set_error(&a->archive, ENOMEM, "Out of memory");
@@ -131,9 +137,8 @@ archive_read_append_filter(struct archive *_a, int code)
     filter->archive = a;
     filter->upstream = a->filter;
     a->filter = filter;
-    r2 = (bidder->init)(a->filter);
+    r2 = (bidder->vtable->init)(a->filter);
     if (r2 != ARCHIVE_OK) {
-      __archive_read_close_filters(a);
       __archive_read_free_filters(a);
       return (ARCHIVE_FATAL);
     }
@@ -178,8 +183,7 @@ archive_read_append_filter_program_signature(struct archive *_a,
     return (ARCHIVE_FATAL);
   }
 
-  filter
-      = (struct archive_read_filter *)calloc(1, sizeof(*filter));
+  filter = calloc(1, sizeof(*filter));
   if (filter == NULL)
   {
     archive_set_error(&a->archive, ENOMEM, "Out of memory");
@@ -189,9 +193,8 @@ archive_read_append_filter_program_signature(struct archive *_a,
   filter->archive = a;
   filter->upstream = a->filter;
   a->filter = filter;
-  r = (bidder->init)(a->filter);
+  r = (bidder->vtable->init)(a->filter);
   if (r != ARCHIVE_OK) {
-    __archive_read_close_filters(a);
     __archive_read_free_filters(a);
     return (ARCHIVE_FATAL);
   }

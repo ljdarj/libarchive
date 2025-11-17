@@ -28,7 +28,6 @@
  */
 
 #include "test.h"
-__FBSDID("$FreeBSD: head/lib/libarchive/test/test_write_format_zip_empty.c 201247 2009-12-30 05:59:21Z kientzle $");
 
 DEFINE_TEST(test_write_format_zip_empty_zip64)
 {
@@ -51,7 +50,7 @@ DEFINE_TEST(test_write_format_zip_empty_zip64)
 	assertEqualIntA(a, ARCHIVE_OK, archive_write_close(a));
 	assertEqualInt(ARCHIVE_OK, archive_write_free(a));
 
-	/* Verify the correct format for an empy Zip archive with Zip64 extensions forced. */
+	/* Verify the correct format for an empty Zip archive with Zip64 extensions forced. */
 	assertEqualInt(used, 98);
 	assertEqualMem(buff,
 	    "PK\006\006" /* Zip64 end-of-central-directory record */

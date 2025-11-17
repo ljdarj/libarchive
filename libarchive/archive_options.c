@@ -24,7 +24,10 @@
  */
 
 #include "archive_platform.h"
-__FBSDID("$FreeBSD$");
+
+#ifdef HAVE_ERRNO_H
+#include <errno.h>
+#endif
 
 #include "archive_options_private.h"
 
@@ -35,16 +38,16 @@ parse_option(const char **str,
 int
 _archive_set_option(struct archive *a,
     const char *m, const char *o, const char *v,
-    int magic, const char *fn, option_handler use_option)
+    unsigned int magic, const char *fn, option_handler use_option)
 {
 	const char *mp, *op, *vp;
 	int r;
 
 	archive_check_magic(a, magic, ARCHIVE_STATE_NEW, fn);
 
-	mp = m != NULL && m[0] == '\0' ? NULL : m;
-	op = o != NULL && o[0] == '\0' ? NULL : o;
-	vp = v != NULL && v[0] == '\0' ? NULL : v;
+	mp = (m != NULL && m[0] != '\0') ? m : NULL;
+	op = (o != NULL && o[0] != '\0') ? o : NULL;
+	vp = (v != NULL && v[0] != '\0') ? v : NULL;
 
 	if (op == NULL && vp == NULL)
 		return (ARCHIVE_OK);
@@ -94,7 +97,7 @@ _archive_set_either_option(struct archive *a, const char *m, const char *o, cons
 
 int
 _archive_set_options(struct archive *a, const char *options,
-    int magic, const char *fn, option_handler use_option)
+    unsigned int magic, const char *fn, option_handler use_option)
 {
 	int allok = 1, anyok = 0, ignore_mod_err = 0, r;
 	char *data;
@@ -105,8 +108,11 @@ _archive_set_options(struct archive *a, const char *options,
 	if (options == NULL || options[0] == '\0')
 		return ARCHIVE_OK;
 
-	data = (char *)malloc(strlen(options) + 1);
-	strcpy(data, options);
+	if ((data = strdup(options)) == NULL) {
+		archive_set_error(a,
+		    ENOMEM, "Out of memory adding file to list");
+		return (ARCHIVE_FATAL);
+	}
 	s = (const char *)data;
 
 	do {

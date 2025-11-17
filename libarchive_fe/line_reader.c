@@ -26,14 +26,12 @@
  */
 
 #include "lafe_platform.h"
-__FBSDID("$FreeBSD$");
-
 #include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
-#include "err.h"
+#include "lafe_err.h"
 #include "line_reader.h"
 
 #if defined(_WIN32) && !defined(__CYGWIN__) && !defined(__BORLANDC__)
@@ -49,11 +47,10 @@ __FBSDID("$FreeBSD$");
  */
 struct lafe_line_reader {
 	FILE *f;
-	char *buff, *buff_end, *line_start, *line_end, *p;
+	char *buff, *buff_end, *line_start, *line_end;
 	char *pathname;
 	size_t buff_length;
 	int nullSeparator; /* Lines separated by null, not CR/CRLF/etc. */
-	int ret;
 };
 
 struct lafe_line_reader *

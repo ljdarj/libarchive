@@ -25,7 +25,6 @@
  */
 
 #include "test.h"
-__FBSDID("$FreeBSD$");
 
 struct archive_read;
 extern void __archive_read_reset_passphrase(struct archive_read *);
@@ -80,7 +79,7 @@ DEFINE_TEST(test_archive_read_add_passphrase_single)
 	__archive_read_reset_passphrase(ar);
 	/* Fist call, we should get "pass1" as a passphrase. */
 	assertEqualString("pass1", __archive_read_next_passphrase(ar));
-	/* Second call, we should get NULL which means all the pssphrases
+	/* Second call, we should get NULL which means all the passphrases
 	 * are passed already. */
 	assertEqualString(NULL, __archive_read_next_passphrase(ar));
 
@@ -100,7 +99,7 @@ DEFINE_TEST(test_archive_read_add_passphrase_multiple)
 	assertEqualString("pass1", __archive_read_next_passphrase(ar));
 	/* Second call, we should get "pass2" as a passphrase. */
 	assertEqualString("pass2", __archive_read_next_passphrase(ar));
-	/* Third call, we should get NULL which means all the pssphrases
+	/* Third call, we should get NULL which means all the passphrases
 	 * are passed already. */
 	assertEqualString(NULL, __archive_read_next_passphrase(ar));
 
@@ -134,6 +133,7 @@ DEFINE_TEST(test_archive_read_add_passphrase_set_callback1)
 	/* Without __archive_read_reset_passphrase call, the callback
 	 * should work fine. */
 	a = archive_read_new();
+	ar = (struct archive_read *)a;
 	assertEqualInt(ARCHIVE_OK,
 	    archive_read_set_passphrase_callback(a, NULL, callback1));
 	/* Fist call, we should get "passCallBack" as a passphrase. */
@@ -170,7 +170,7 @@ DEFINE_TEST(test_archive_read_add_passphrase_set_callback2)
 	__archive_read_reset_passphrase(ar);
 	/* Fist call, we should get "passCallBack" as a passphrase. */
 	assertEqualString("passCallBack", __archive_read_next_passphrase(ar));
-	/* Second call, we should get NULL which means all the pssphrases
+	/* Second call, we should get NULL which means all the passphrases
 	 * are passed already. */
 	assertEqualString(NULL, __archive_read_next_passphrase(ar));
 
@@ -190,9 +190,9 @@ DEFINE_TEST(test_archive_read_add_passphrase_set_callback3)
 	/* Fist call, we should get "passCallBack" as a passphrase. */
 	assertEqualString("passCallBack", __archive_read_next_passphrase(ar));
 	__archive_read_reset_passphrase(ar);
-	/* After reset passphrase, we should get "passCallBack"passphrase. */
+	/* After reset passphrase, we should get "passCallBack" passphrase. */
 	assertEqualString("passCallBack", __archive_read_next_passphrase(ar));
-	/* Second call, we should get NULL which means all the pssphrases
+	/* Second call, we should get NULL which means all the passphrases
 	 * are passed already. */
 	assertEqualString(NULL, __archive_read_next_passphrase(ar));
 
@@ -217,7 +217,7 @@ DEFINE_TEST(test_archive_read_add_passphrase_multiple_with_callback)
 	assertEqualString("pass2", __archive_read_next_passphrase(ar));
 	/* Third call, we should get "passCallBack" as a passphrase. */
 	assertEqualString("passCallBack", __archive_read_next_passphrase(ar));
-	/* Fourth call, we should get NULL which means all the pssphrases
+	/* Fourth call, we should get NULL which means all the passphrases
 	 * are passed already. */
 	assertEqualString(NULL, __archive_read_next_passphrase(ar));
 
@@ -250,7 +250,7 @@ DEFINE_TEST(test_archive_read_add_passphrase_multiple_with_callback2)
 	assertEqualString("pass1", __archive_read_next_passphrase(ar));
 	/* Third call, we should get "passCallBack" as a passphrase. */
 	assertEqualString("pass2", __archive_read_next_passphrase(ar));
-	/* Fourth call, we should get NULL which means all the pssphrases
+	/* Fourth call, we should get NULL which means all the passphrases
 	 * are passed already. */
 	assertEqualString(NULL, __archive_read_next_passphrase(ar));
 

@@ -24,7 +24,6 @@
  * THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 #include "test.h"
-__FBSDID("$FreeBSD$");
 
 static char archive_data[] = {
 "begin 644 test_read_uu.Z\n"
@@ -40,7 +39,7 @@ static char archive_data[] = {
 };
 
 /*
- * Compatibility: uudecode command ignores junk data placed ater the "end"
+ * Compatibility: uudecode command ignores junk data placed after the "end"
  * marker.
  */
 DEFINE_TEST(test_compat_uudecode)

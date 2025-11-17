@@ -23,7 +23,6 @@
  * THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 #include "test.h"
-__FBSDID("$FreeBSD");
 
 #include <locale.h>
 
@@ -1116,7 +1115,7 @@ cleanup:
  * - the filename of second file is stored in UTF-8.
  *
  * Whenever hdrcharset option is specified, we will correctly read the
- * filename of sencod file, which is stored in UTF-8.
+ * filename of second file, which is stored in UTF-8.
  */
 
 DEFINE_TEST(test_read_format_zip_filename_KOI8R_UTF8_2)
@@ -1179,6 +1178,11 @@ next_test:
 	assertEqualInt(ARCHIVE_OK, archive_read_free(a));
 
 	/*
+	 * By default, Windows will create an sconv_default object, which will
+	 * interpret filenames as OEMCP
+	 */
+#if !defined(_WIN32) || defined(__CYGWIN__)
+	/*
 	 * Read filename in en_US.UTF-8 without "hdrcharset=KOI8-R" option.
 	 * The filename we can properly read is only second file.
 	 */
@@ -1221,4 +1225,5 @@ next_test:
 	/* Close the archive. */
 	assertEqualInt(ARCHIVE_OK, archive_read_close(a));
 	assertEqualInt(ARCHIVE_OK, archive_read_free(a));
+#endif
 }
